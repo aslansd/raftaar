@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Raftaar — demonstration data diagnostics</title>
+<style>
+  :root{
+    /* Taken from the diagnostic figure so the page and the chart read as one artifact. */
+    --paper:#EEF1F5; --panel:#FFFFFF; --ink:#14203A; --ink-soft:#5A6683;
+    --rule:#C3CCD9; --rule-soft:#DEE4EC;
+    --trace:#3B7DD8; --mode:#2BA05A; --amber:#E8A33D; --red:#D1342F;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--sans);
+       font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1120px;margin:0 auto;padding:36px 22px 72px}
+
+  /* ---- masthead ---- */
+  header{border-bottom:2px solid var(--ink);padding-bottom:14px;margin-bottom:26px}
+  .brand{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:-.02em}
+  .brand span{color:var(--trace)}
+  .tag{font-family:var(--mono);font-size:12.5px;color:var(--ink-soft);
+       text-transform:uppercase;letter-spacing:.13em;margin-top:6px}
+  .lede{margin:16px 0 0;max-width:64ch;color:var(--ink-soft)}
+  .lede strong{color:var(--ink);font-weight:600}
+
+  .cols{display:grid;grid-template-columns:340px 1fr;gap:26px;align-items:start;margin-top:30px}
+  @media(max-width:860px){.cols{grid-template-columns:1fr}}
+
+  /* ---- control panel ---- */
+  .panel{background:var(--panel);border:1px solid var(--rule);border-radius:3px;
+         padding:20px;position:sticky;top:20px}
+  @media(max-width:860px){.panel{position:static}}
+  .panel h2,.card h2{font-family:var(--mono);font-size:11.5px;text-transform:uppercase;
+    letter-spacing:.14em;color:var(--ink-soft);margin:0 0 14px;font-weight:600}
+
+  .sw{display:flex;gap:11px;padding:11px 0;border-top:1px solid var(--rule-soft);cursor:pointer}
+  .sw:first-of-type{border-top:none}
+  .sw input{margin:3px 0 0;accent-color:var(--red);width:15px;height:15px;flex:none}
+  .sw .n{font-family:var(--mono);font-size:13px;font-weight:600;display:block}
+  .sw .d{font-size:12.5px;color:var(--ink-soft);line-height:1.45}
+
+  .eps{display:flex;align-items:center;justify-content:space-between;gap:10px;
+       margin:16px 0 4px;padding-top:14px;border-top:1px solid var(--rule-soft)}
+  .eps label{font-family:var(--mono);font-size:12px;color:var(--ink-soft)}
+  .eps input{width:82px;padding:7px 9px;font-family:var(--mono);font-size:13px;
+             border:1px solid var(--rule);border-radius:2px;background:var(--paper);color:var(--ink)}
+
+  button.run{width:100%;margin-top:16px;padding:13px;background:var(--ink);color:#fff;
+    border:none;border-radius:2px;font-family:var(--mono);font-size:13px;font-weight:600;
+    letter-spacing:.07em;text-transform:uppercase;cursor:pointer}
+  button.run:hover{background:#25355A}
+  button.run:focus-visible,input:focus-visible,a:focus-visible{outline:2px solid var(--trace);outline-offset:2px}
+  form.busy button.run{opacity:.55;pointer-events:none}
+  form.busy button.run::after{content:" — scanning"}
+  .hint{font-size:12px;color:var(--ink-soft);margin-top:11px;font-family:var(--mono);line-height:1.5}
+
+  /* ---- verdict: the one loud element ---- */
+  .verdict{background:var(--panel);border:1px solid var(--rule);border-radius:3px;
+           padding:20px 22px;margin-bottom:22px}
+  .verdict .n{font-family:var(--mono);font-size:27px;font-weight:600;letter-spacing:-.01em;
+              display:block;line-height:1.2}
+  .verdict .m{font-family:var(--mono);font-size:12px;color:var(--ink-soft);
+              text-transform:uppercase;letter-spacing:.12em;margin-top:7px}
+  .bar{display:flex;height:5px;margin-top:16px;border-radius:2px;overflow:hidden;background:var(--rule-soft)}
+  .bar i{display:block}
+  .bar .c{background:var(--red)} .bar .w{background:var(--amber)} .bar .i{background:var(--trace)}
+  .bar .ok{background:var(--mode);flex:1}
+
+  /* ---- findings ---- */
+  .card{background:var(--panel);border:1px solid var(--rule);border-radius:3px;
+        padding:20px 22px;margin-bottom:22px}
+  .f{display:grid;grid-template-columns:6px 1fr;gap:15px;padding:15px 0;
+     border-top:1px solid var(--rule-soft)}
+  .f:first-of-type{border-top:none;padding-top:2px}
+  .gutter{border-radius:3px;background:var(--trace)}
+  .f.critical .gutter{background:var(--red)}
+  .f.warning  .gutter{background:var(--amber)}
+  .f.info     .gutter{background:var(--rule)}
+  .fid{font-family:var(--mono);font-size:13px;font-weight:600;letter-spacing:-.01em}
+  .fsev{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.12em;
+        padding:2px 6px;border-radius:2px;margin-left:9px;vertical-align:1.5px;
+        background:var(--rule-soft);color:var(--ink-soft)}
+  .f.critical .fsev{background:var(--red);color:#fff}
+  .f.warning  .fsev{background:var(--amber);color:#3A2600}
+  .fwhere{font-family:var(--mono);font-size:12px;color:var(--ink-soft);margin-top:4px}
+  .fwhat{margin:9px 0 0}
+  .fso{margin:7px 0 0;color:var(--ink-soft);font-size:14px}
+
+  figure{margin:0}
+  figure img{width:100%;display:block;border:1px solid var(--rule-soft);border-radius:2px}
+  figcaption{font-family:var(--mono);font-size:12px;color:var(--ink-soft);margin-top:11px;line-height:1.55}
+
+  table{width:100%;border-collapse:collapse;font-family:var(--mono);font-size:12.5px}
+  th{text-align:left;font-weight:600;color:var(--ink-soft);text-transform:uppercase;
+     letter-spacing:.1em;font-size:10.5px;padding:0 10px 9px 0;border-bottom:1px solid var(--rule)}
+  td{padding:9px 10px 9px 0;border-bottom:1px solid var(--rule-soft)}
+  td.bad{color:var(--red);font-weight:600}
+  td.good{color:var(--mode);font-weight:600}
+  tr:last-child td{border-bottom:none}
+
+  .empty{font-family:var(--mono);font-size:13px;color:var(--ink-soft);
+         background:var(--panel);border:1px dashed var(--rule);border-radius:3px;padding:40px 24px;
+         text-align:center;line-height:1.7}
+  footer{margin-top:36px;padding-top:16px;border-top:1px solid var(--rule);
+         font-family:var(--mono);font-size:11.5px;color:var(--ink-soft);line-height:1.7}
+  @media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">Demo<span>Scope</span></div>
+  <div class="tag">Demonstration data diagnostics</div>
+  <p class="lede">Robot demonstration datasets fail silently. Two operators solve the same
+  task two different ways, a regression policy learns the average of both, and
+  <strong>the training loss falls the entire time</strong>. This reads the data and tells you
+  which policy class will break on it — before you train anything.</p>
+</header>
+
+<div class="cols">
+
+  <form class="panel" method="post" onsubmit="this.classList.add('busy')">
+    <h2>Inject faults</h2>
+    {% for key, name, desc in faults %}
+    <label class="sw">
+      <input type="checkbox" name="faults" value="{{ key }}"
+             {% if key in selected %}checked{% endif %}>
+      <span><span class="n">{{ name }}</span><span class="d">{{ desc }}</span></span>
+    </label>
+    {% endfor %}
+
+    <div class="eps">
+      <label for="episodes">Episodes</label>
+      <input id="episodes" type="number" name="episodes" min="80" max="200" step="10"
+             value="{{ episodes }}">
+    </div>
+
+    <button class="run" type="submit">Run scan</button>
+    <p class="hint">Leave every switch off to scan a clean dataset. A quiet report on
+    clean data is the control — check that first.</p>
+  </form>
+
+  <main>
+  {% if not report %}
+    <div class="empty">
+      No scan yet.<br>Pick your faults on the left and run one.<br>
+      Takes about a second — nothing is trained.
+    </div>
+  {% else %}
+
+    {% set c = report.counts %}
+    <div class="verdict">
+      <span class="n">
+        {% if c.critical or c.warning %}
+          {{ c.critical }} critical · {{ c.warning }} warning
+        {% else %}
+          No warnings
+        {% endif %}
+      </span>
+      <span class="m">{{ report.n_episodes }} episodes · {{ "{:,}".format(report.n_frames) }} frames · nothing trained</span>
+      <div class="bar">
+        {% if c.critical or c.warning %}
+          {% if c.critical %}<i class="c" style="flex:{{ c.critical }}"></i>{% endif %}
+          {% if c.warning %}<i class="w" style="flex:{{ c.warning }}"></i>{% endif %}
+          {% if c.info %}<i class="i" style="flex:{{ c.info }}"></i>{% endif %}
+        {% else %}<i class="ok"></i>{% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Findings</h2>
+      {% if not report.findings %}
+        <p style="margin:0;color:var(--ink-soft)">Nothing trips a detector. Train with confidence.</p>
+      {% endif %}
+      {% for f in report.findings %}
+      <div class="f {{ f.severity }}">
+        <div class="gutter"></div>
+        <div>
+          <div><span class="fid">{{ f.id }}</span><span class="fsev">{{ f.severity }}</span></div>
+          <div class="fwhere">{{ f.where }}</div>
+          <p class="fwhat">{{ f.what }}</p>
+          <p class="fso">{{ f.so_what }}</p>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+
+    <div class="card">
+      <h2>Diagnostic figure</h2>
+      <figure>
+        <img alt="Four diagnostic panels: approach strategies, task-condition coverage, conditional action entropy by phase, and episode feature space."
+             src="data:image/png;base64,{{ report.figure }}">
+        <figcaption>Top left is the one that matters. Thin lines are individual
+        demonstrations, coloured by the strategy the tool recovered. The thick red line is
+        their average — which is what a regression policy converges to.</figcaption>
+      </figure>
+    </div>
+
+    <div class="card">
+      <h2>Measurements</h2>
+      <table>
+        <thead><tr><th>Phase</th><th>Strategies</th><th>Averaging hazard</th><th>H(a|s)</th></tr></thead>
+        <tbody>
+        {% for a in report.averaging %}
+          <tr>
+            <td>{{ a.phase }}</td>
+            <td>{{ a.n_modes }}</td>
+            <td {% if a.n_modes > 1 and a.hazard_ratio > 1.0 %}class="bad"{% endif %}>
+              {{ "%.2f"|format(a.hazard_ratio) }} SD</td>
+            <td>{{ "%.2f"|format(report.entropy.per_phase.get(a.phase, 0)) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <p class="hint" style="margin-top:14px">
+        Condition-space gap {{ "%.0f%%"|format(report.coverage.gap_ratio * 100) }} ·
+        intrinsic dimensionality {{ "%.2f"|format(report.coverage.intrinsic_dim) }} ·
+        {{ report.shards.n_shards }} feature shard(s), CKA {{ "%.2f"|format(report.shards.cka_between) }}
+      </p>
+    </div>
+
+    {% if validation %}
+    <div class="card">
+      <h2>Did the warning come true?</h2>
+      <p style="margin:0 0 14px;color:var(--ink-soft);font-size:14px">
+        Two policy classes trained on this exact configuration and rolled out 40 times each.
+        Measured ahead of time — training takes minutes, so it does not run in the browser.</p>
+      <table>
+        <thead><tr><th>Policy</th><th>Success</th><th>Collision</th></tr></thead>
+        <tbody>
+        {% for name, succ, coll in validation.rows %}
+          <tr>
+            <td>{{ name }}</td>
+            <td class="{{ 'good' if succ|replace('%','')|int >= 90 else '' }}">{{ succ }}</td>
+            <td class="{{ 'bad' if coll|replace('%','')|int >= 25 else '' }}">{{ coll }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+
+  {% endif %}
+  </main>
+</div>
+
+<footer>
+  Research prototype. The synthetic environment exists so the detectors can be scored
+  against ground truth, not because synthetic data is the product.<br>
+  CPU only — no GPU, no torch, no network calls.
+</footer>
+
+</div>
+</body>
+</html>
