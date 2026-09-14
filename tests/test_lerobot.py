@@ -352,3 +352,109 @@ class TestCLIWithLeRobot:
         out = tmp_path / "fig.png"
         plot(data, scan(data), out)
         assert out.stat().st_size > 5000
+
+
+def _write_lerobot_v3(root: Path, n_episodes=30, n_frames=50,
+                      episodes_per_file=10, names=JOINT_NAMES, seed=0):
+    """LeRobotDataset v3.0: many episodes concatenated into one parquet file.
+
+    v3 packs episodes together to keep file counts manageable at hub scale. A
+    reader that assumes one episode per file does not fail on these -- it glues
+    every episode in the file into a single trajectory and scans that, which
+    produces numbers rather than an error.
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    rng = np.random.default_rng(seed)
+    n_dims = len(names)
+    (root / "meta").mkdir(parents=True, exist_ok=True)
+    (root / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+
+    ep = 0
+    for file_no in range((n_episodes + episodes_per_file - 1) // episodes_per_file):
+        rows = {k: [] for k in ("observation.state", "action", "timestamp",
+                                "frame_index", "episode_index", "index",
+                                "task_index")}
+        for _ in range(min(episodes_per_file, n_episodes - ep)):
+            t = np.linspace(0, 1, n_frames)
+            state = np.zeros((n_frames, n_dims), dtype="float32")
+            target = rng.uniform(-1, 1, size=3)
+            for d in range(min(3, n_dims)):
+                state[:, d] = t * target[d] + rng.normal(0, 0.02, n_frames)
+            gripper = np.ones(n_frames, dtype="float32")
+            gripper[n_frames // 3: 2 * n_frames // 3] = 0.0
+            state[:, -1] = gripper
+            action = np.diff(state, axis=0, prepend=state[:1]).astype("float32")
+
+            rows["observation.state"] += state.tolist()
+            rows["action"] += action.tolist()
+            rows["timestamp"] += (np.arange(n_frames) / 30.0).tolist()
+            rows["frame_index"] += np.arange(n_frames).tolist()
+            rows["episode_index"] += [ep] * n_frames
+            rows["index"] += (np.arange(n_frames) + ep * n_frames).tolist()
+            rows["task_index"] += [0] * n_frames
+            ep += 1
+
+        pq.write_table(pa.table(rows),
+                       root / "data" / "chunk-000" / f"file-{file_no:04d}.parquet")
+
+    (root / "meta" / "info.json").write_text(json.dumps({
+        "codebase_version": "v3.0",
+        "repo_id": "test/fixture-v3",
+        "robot_type": "so101",
+        "fps": 30,
+        "total_episodes": n_episodes,
+        "features": {
+            "observation.state": {"dtype": "float32", "shape": [n_dims],
+                                  "names": names},
+            "action": {"dtype": "float32", "shape": [n_dims], "names": names},
+        },
+    }, indent=2))
+    (root / "meta" / "tasks.jsonl").write_text(
+        json.dumps({"task_index": 0, "task": "pick up the cube"}))
+    # v3 stores episode metadata as chunked parquet, not episodes.jsonl.
+    return root
+
+
+class TestV3Layout:
+    """v3.0 packs many episodes per file. Splitting on `episode_index` handles
+    both formats; assuming one episode per file silently merges them."""
+
+    def test_episodes_are_split_out_of_multi_episode_files(self, tmp_path):
+        root = _write_lerobot_v3(tmp_path / "v3", n_episodes=30,
+                                 episodes_per_file=10)
+        data = load_lerobot(root)
+
+        # 3 files, 30 episodes -- not 3.
+        assert len(data["episodes"]) == 30
+        for episode in data["episodes"]:
+            assert episode["observation.state"].shape[0] == 50
+
+    def test_v3_reports_its_codebase_version(self, tmp_path):
+        root = _write_lerobot_v3(tmp_path / "v3b", n_episodes=10,
+                                 episodes_per_file=10)
+        info = load_lerobot(root)["info"]
+        assert info["_adapter"]["codebase_version"] == "v3.0"
+        assert info["_adapter"]["episodes_read"] == 10
+
+    def test_missing_episodes_jsonl_is_not_fatal(self, tmp_path):
+        """v3 replaced episodes.jsonl with chunked parquet under meta/episodes/."""
+        root = _write_lerobot_v3(tmp_path / "v3c", n_episodes=12,
+                                 episodes_per_file=6)
+        assert not (root / "meta" / "episodes.jsonl").exists()
+        assert len(load_lerobot(root)["episodes"]) == 12
+
+    def test_max_episodes_counts_episodes_not_files(self, tmp_path):
+        """One v3 file can hold forty episodes, so slicing the file list would
+        read far more than asked for."""
+        root = _write_lerobot_v3(tmp_path / "v3d", n_episodes=30,
+                                 episodes_per_file=10)
+        assert len(load_lerobot(root, max_episodes=7)["episodes"]) == 7
+
+    def test_scan_runs_on_a_v3_dataset(self, tmp_path):
+        root = _write_lerobot_v3(tmp_path / "v3e", n_episodes=40,
+                                 episodes_per_file=20)
+        report = scan(load_lerobot(root))
+        assert report["n_episodes"] == 40
+        assert report["n_frames"] == 40 * 50

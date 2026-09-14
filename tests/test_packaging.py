@@ -191,3 +191,41 @@ class TestSynthEnvironment:
         assert a["episodes"][0]["action"].shape == b["episodes"][0]["action"].shape
         assert not np.allclose(a["episodes"][0]["action"],
                                b["episodes"][0]["action"])
+
+
+class TestWebTemplateBranding:
+    """The masthead is split across a tag for the two-tone colour:
+
+        <div class="brand">Raf<span>taar</span></div>
+
+    which means the product name never appears as a contiguous string. A rename
+    that searches for "DemoScope" silently misses it, and the page keeps the old
+    brand while the <title> is correctly updated -- so it looks right in the tab
+    and wrong on the page.
+
+    This strips tags before comparing, which is the only way to catch it.
+    """
+
+    def _brand_text(self):
+        import re
+        from pathlib import Path
+
+        template = (Path(__file__).resolve().parent.parent
+                    / "web" / "templates" / "index.html")
+        html = template.read_text(encoding="utf-8")
+        match = re.search(r'<div class="brand">(.*?)</div>', html, re.S)
+        assert match, "no .brand element in the template"
+        return re.sub(r"<[^>]+>", "", match.group(1)).strip()
+
+    def test_masthead_reads_raftaar_once_tags_are_stripped(self):
+        assert self._brand_text() == "Raftaar"
+
+    def test_no_former_name_survives_anywhere_in_the_template(self):
+        import re
+        from pathlib import Path
+
+        template = (Path(__file__).resolve().parent.parent
+                    / "web" / "templates" / "index.html")
+        stripped = re.sub(r"<[^>]+>", "", template.read_text(encoding="utf-8"))
+        for old in ("DemoScope", "demoscope", "KineLens", "kinelens"):
+            assert old not in stripped, f"{old} still in the rendered text"
