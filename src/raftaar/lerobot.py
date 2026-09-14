@@ -5,12 +5,21 @@ depends on torch, torchvision and opencv; a CPU dataset audit should not pull a
 GPU stack to open a parquet file. The trade is that this module tracks the
 format rather than the API, and the format is the more stable of the two.
 
-Layout expected (LeRobotDataset v2.x, as published on the Hugging Face Hub):
+Both published layouts are read:
 
-    meta/info.json           features, fps, chunk layout, episode/frame totals
-    meta/episodes.jsonl      one record per episode: index, tasks, length
+    v2.x   data/chunk-000/episode_000000.parquet   one episode per file
+    v3.0   data/chunk-000/file-0000.parquet        many episodes per file
+
+Episodes are separated on the `episode_index` column, which exists in both, so
+the reader does not depend on the file naming. That matters: v3 names its files
+`file-*.parquet`, and a reader matching `episode_*.parquet` finds nothing and
+reports the dataset as empty -- or worse, matches and treats forty concatenated
+episodes as one trajectory, which yields a scan rather than an error.
+
+    meta/info.json           features, fps, codebase version
     meta/tasks.jsonl         task index -> natural-language task string
-    data/chunk-000/episode_000000.parquet
+    meta/episodes.jsonl      v2.x only; v3 uses chunked parquet under
+                             meta/episodes/, which this reader does not need
 
 Two things real datasets do not have, which the detectors need:
 
@@ -87,10 +96,15 @@ def _feature_names(info: dict, key: str) -> list[str] | None:
 
 
 def _parquet_files(root: Path, info: dict) -> list[Path]:
-    files = sorted(root.glob("data/**/episode_*.parquet"))
-    if not files:
-        files = sorted(root.glob("data/*.parquet"))
-    return files
+    """Every parquet under data/, whatever it is called.
+
+    v2.x names them `episode_000000.parquet`, v3.0 names them
+    `file-0000.parquet`. Matching on the `episode_*` prefix silently found
+    nothing on v3 and reported the dataset as empty, so the glob is deliberately
+    permissive and the episode split is done on the `episode_index` column
+    instead -- which is present in both formats.
+    """
+    return sorted(root.glob("data/**/*.parquet"))
 
 
 def _load_table(path: Path) -> dict[str, np.ndarray]:
@@ -235,8 +249,8 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
     files = _parquet_files(root, info)
     if not files:
         raise LeRobotFormatError(f"no episode parquet files under {root/'data'}")
-    if max_episodes is not None:
-        files = files[:max_episodes]
+    # NB: max_episodes counts episodes, not files -- under v3 one file holds
+    # many -- so the limit is applied while reading, not by slicing `files`.
 
     state_names = _feature_names(info, state_key)
     action_names = _feature_names(info, action_key)
@@ -251,28 +265,52 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
             skipped.append(f"{file.name}: missing {state_key} or {action_key}")
             continue
 
-        states = np.atleast_2d(np.asarray(table[state_key], dtype="float32"))
-        actions = np.atleast_2d(np.asarray(table[action_key], dtype="float32"))
-        if states.shape[0] < 8:
-            skipped.append(f"{file.name}: only {states.shape[0]} frames")
-            continue
+        # v2.x wrote one episode per parquet; v3.0 concatenates many episodes
+        # into `file-0000.parquet` to keep file counts down. Splitting on the
+        # `episode_index` column handles both, and is the difference between
+        # reading a dataset and silently gluing forty episodes into one --
+        # which would still produce a scan, just a meaningless one.
+        all_states = np.atleast_2d(np.asarray(table[state_key], dtype="float32"))
+        all_actions = np.atleast_2d(np.asarray(table[action_key], dtype="float32"))
 
-        gripper = infer_gripper_dim(state_names, states)
-        phases, method = segment_phases(actions, states, gripper)
-        methods.append(method)
+        if "episode_index" in table:
+            idx = np.asarray(table["episode_index"]).ravel()
+            # Preserve file order rather than sorting: episodes are written in
+            # order and the boundaries are what matter, not the labels.
+            boundaries = np.flatnonzero(np.diff(idx)) + 1
+            groups = np.split(np.arange(len(idx)), boundaries)
+        else:
+            groups = [np.arange(len(all_states))]
 
-        episode: dict[str, Any] = {
-            "observation.state": states,
-            "action": actions,
-            "phase": phases,
-        }
-        # Carry any precomputed visual features through; most hub datasets have
-        # none, and representation_shards reports that rather than guessing.
-        for key, value in table.items():
-            if "image" in key and value.ndim == 2 and value.shape[1] > 1:
-                episode["observation.image_features"] = value
+        for rows in groups:
+            if max_episodes is not None and len(episodes) >= max_episodes:
                 break
-        episodes.append(episode)
+            states = all_states[rows]
+            actions = all_actions[rows]
+            if states.shape[0] < 8:
+                skipped.append(f"{file.name}: episode with {states.shape[0]} frames")
+                continue
+
+            gripper = infer_gripper_dim(state_names, states)
+            phases, method = segment_phases(actions, states, gripper)
+            methods.append(method)
+
+            episode: dict[str, Any] = {
+                "observation.state": states,
+                "action": actions,
+                "phase": phases,
+            }
+            # Carry any precomputed visual features through; most hub datasets
+            # have none, and representation_shards reports that rather than
+            # guessing.
+            for key, value in table.items():
+                if "image" in key and value.ndim == 2 and value.shape[1] > 1:
+                    episode["observation.image_features"] = value[rows]
+                    break
+            episodes.append(episode)
+
+        if max_episodes is not None and len(episodes) >= max_episodes:
+            break
 
     if not episodes:
         raise LeRobotFormatError(
