@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "raftaar"
-version = "0.1.0"
+version = "0.2.0"
 description = "Know what your robot demonstrations will teach, before you train. Predicts which policy class will fail on a dataset, and where."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -39,6 +39,10 @@ dependencies = [
 # Figures. `raftaar scan` writes the markdown report without this and tells
 # you what it skipped.
 plot = ["matplotlib>=3.8"]
+# Reading LeRobotDataset directories. pyarrow only -- NOT the lerobot package,
+# which pulls torch, torchvision and opencv. The adapter reads the on-disk
+# format, so a CPU audit stays a CPU audit.
+lerobot = ["pyarrow>=14"]
 # The rollout study that checks whether the warnings were right.
 validate = ["matplotlib>=3.8"]
 # The hosted demo in web/.
@@ -48,8 +52,9 @@ provenance = ["daftar>=0.8"]
 dev = [
   "pytest>=8",
   "matplotlib>=3.8",
+  "pyarrow>=14",
 ]
-all = ["matplotlib>=3.8", "flask>=3.0", "gunicorn>=22.0", "daftar>=0.8"]
+all = ["matplotlib>=3.8", "pyarrow>=14", "flask>=3.0", "gunicorn>=22.0", "daftar>=0.8"]
 
 [project.urls]
 Homepage = "https://github.com/aslansd/raftaar"

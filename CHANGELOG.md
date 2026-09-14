@@ -1,5 +1,72 @@
 # Changelog
 
+## 0.2.0 — real datasets
+
+Months 1–3 of the plan: the library reads **LeRobotDataset** directories, so the
+detectors run on data nobody generated to order.
+
+### The adapter reads the format, not the library
+
+`raftaar.lerobot.load_lerobot()` parses `meta/info.json`, `meta/episodes.jsonl`,
+`meta/tasks.jsonl` and `data/**/*.parquet` directly. It does **not** import
+`lerobot`, which depends on torch, torchvision and opencv — a CPU dataset audit
+should not pull a GPU stack to open a parquet file. The only new dependency is
+`pyarrow`, behind the `[lerobot]` extra, and a test asserts in a subprocess that
+neither `torch` nor `lerobot` ends up in `sys.modules`.
+
+### Two things hub datasets do not have
+
+**Phase labels.** Derived from the gripper channel — the moments it closes and
+opens are the boundaries an operator works to. Without an identifiable gripper,
+the episode is cut into equal thirds. Which method ran is recorded per dataset
+and printed by the CLI, because a scan segmented by thirds is not comparable to
+one segmented by gripper and nothing else would say so.
+
+**A notion of which state columns are spatial.** `averaging_hazard` previously
+hard-coded `state[:, :3]` — true for the synthetic robot, false for a joint-space
+arm, and wrong in the expensive way: it produces plausible numbers that mean
+something else. The columns are now chosen by the adapter (Cartesian when the
+feature names say so, first three joints otherwise), recorded in the manifest as
+`spatial_dims`, and reported as `cartesian-by-name` or `first-3-joints`.
+
+### An unrun check is no longer reported as a clean result
+
+No hub dataset ships precomputed image features, so `representation_shards` now
+returns `available: False` with a reason rather than "0 shards". The markdown
+report says **not assessed**, and the figure's fourth panel says so too instead
+of plotting an invented scatter.
+
+The same applies to the figure's labels: the axes now name the actual channels
+(`shoulder_pan`, `wrist_flex`) rather than claiming metres, and the synthetic
+environment's obstacle marker is drawn only for synthetic data. A phantom
+obstacle on a real dataset would be a fabricated hazard.
+
+### CLI
+
+```bash
+raftaar scan <dataset> --max-episodes 50     # format auto-detected
+raftaar scan <dataset> --format lerobot
+```
+
+Detection uses the data files, since both layouts carry `meta/info.json`:
+`data/episode_*.npz` is Raftaar's own, `data/**/*.parquet` is LeRobot. A
+directory that is neither now fails with a message naming both, rather than a
+numpy traceback about concatenating an empty list.
+
+### Docs
+
+`PUBLISHING.md` and `TESTING.md` added, including the PyPI name-similarity trap
+that blocked `raftar` (the name was unregistered *and* unregistrable, because
+`rafter` exists). `web/README.md` rewritten, and the web Dockerfile fixed — it
+referenced `requirements.txt` and a top-level `raftaar/` directory, neither of
+which exists in the packaged layout, so the image could not have built.
+
+### Tests
+
+53, up from 29. The 24 new ones write the LeRobotDataset layout on disk and read
+it back, covering both a joint-space arm with a named gripper and a Cartesian
+dataset — the two shapes the adapter has to tell apart.
+
 ## 0.1.0
 
 Named **Raftaar** — رفتار, *behaviour*, in Persian, Turkish and Urdu.

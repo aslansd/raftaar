@@ -76,6 +76,55 @@ for finding in report["findings"]:
 
 ---
 
+## Real datasets
+
+Raftaar reads **LeRobotDataset** directories directly — the format published on
+the Hugging Face Hub:
+
+```bash
+pip install "raftaar[lerobot]"
+raftaar scan ~/.cache/huggingface/lerobot/<repo_id> --max-episodes 50
+```
+
+```python
+from raftaar import scan
+from raftaar.lerobot import load_lerobot
+
+report = scan(load_lerobot("path/to/dataset", max_episodes=50))
+```
+
+It reads the **format**, not the library. `lerobot` depends on torch,
+torchvision and opencv; a CPU dataset audit should not pull a GPU stack to open
+a parquet file. The only extra dependency is `pyarrow`.
+
+### Two things real datasets do not have
+
+Hub datasets carry no **phase labels** and no explicit notion of which state
+columns are **spatial**. Raftaar derives both, and records how — because a scan
+that guessed is not comparable to one that did not:
+
+```
+read as LeRobotDataset: 60 episodes, phases by gripper,
+trajectories compared in first-3-joints
+```
+
+**Phases** come from the gripper channel: the moments it closes and opens are
+the boundaries an operator actually works to. Without an identifiable gripper
+the episode is cut into equal thirds and labelled `thirds`, which is a weaker
+segmentation and says so.
+
+**Spatial columns** are Cartesian when the feature names say so (`ee_x`, `ee_y`,
+`ee_z`), and otherwise the first three joints. Comparing trajectories in joint
+space is legitimate; calling joint angles a position is not, so the report says
+which happened rather than leaving you to assume.
+
+**Visual sharding is skipped**, not silently passed. No hub dataset ships
+precomputed image features, so that detector reports `not assessed` with a
+reason instead of "0 shards found" — a check that did not run is not a clean
+result.
+
+---
+
 ## The five detectors
 
 | Detector | Question it answers |
@@ -144,6 +193,7 @@ under-powered, not wrong. Both behaviours are pinned by tests in
 The core install is deliberately small. Everything else is opt-in:
 
 ```bash
+pip install "raftaar[lerobot]"     # pyarrow, to read LeRobotDataset directories
 pip install "raftaar[plot]"        # matplotlib, for the diagnostic figure
 pip install "raftaar[validate]"    # the rollout study
 pip install "raftaar[provenance]"  # record what produced each scan
@@ -178,7 +228,7 @@ rather than eyeballed. Without daftar it behaves exactly like
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 29 tests
+pytest -q          # 53 tests
 ```
 
 The detector tests are the ones that matter. Every fault is *injected
@@ -193,10 +243,17 @@ ground truth rather than opinion — and both directions are tested:
 
 ## Status
 
-Research prototype, honestly labelled. The synthetic environment exists so the
-detectors can be scored against ground truth. The next milestone is a
-`LeRobotDataset` adapter and a run across the public dataset hub — at which
-point the claims above get tested against data nobody generated to order.
+Research prototype, honestly labelled.
+
+The synthetic environment exists so the detectors can be scored against ground
+truth, and the LeRobot adapter means they now run on data nobody generated to
+order. What has **not** happened yet is the part that decides whether any of
+this is useful: a validation study across a few dozen public datasets, training
+small policies and testing whether the pre-training metrics predict
+post-training success.
+
+Until that exists, treat the numbers as a hypothesis with a working
+implementation behind it.
 
 ## Licence
 

@@ -1,6 +1,8 @@
 include LICENSE
 include README.md
 include CHANGELOG.md
+include PUBLISHING.md
+include TESTING.md
 recursive-include tests *.py
 recursive-include examples *.md *.py
 recursive-include web *.py *.html *.md
