@@ -228,7 +228,7 @@ rather than eyeballed. Without daftar it behaves exactly like
 
 ```bash
 pip install -e ".[dev]"
-pytest -q          # 53 tests
+pytest -q                  # 53 tests
 ```
 
 The detector tests are the ones that matter. Every fault is *injected
