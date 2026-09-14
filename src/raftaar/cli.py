@@ -23,8 +23,55 @@ def _synth(args):
         print("injected faults:", ", ".join(faults.active()))
 
 
+def detect_format(path: Path) -> str:
+    """Which on-disk format this directory is.
+
+    Both layouts carry `meta/info.json`, so the discriminator has to be the data
+    files: Raftaar writes `data/episode_*.npz`, LeRobot writes parquet under
+    `data/chunk-*/`.
+    """
+    if any((path / "data").glob("episode_*.npz")):
+        return "raftaar"
+    if any(path.glob("data/**/*.parquet")):
+        return "lerobot"
+    return "unknown"
+
+
+def _load(args):
+    """Read either Raftaar's own format or a LeRobotDataset directory."""
+    fmt = getattr(args, "format", "auto")
+    path = Path(args.path)
+
+    if not path.is_dir():
+        raise SystemExit(f"raftaar: no such dataset directory: {path}")
+
+    if fmt == "auto":
+        fmt = detect_format(path)
+        if fmt == "unknown":
+            raise SystemExit(
+                f"raftaar: {path} contains neither data/episode_*.npz "
+                f"(Raftaar) nor data/**/*.parquet (LeRobot).\n"
+                f"           Point this at the dataset root, and pass "
+                f"--format if detection is wrong."
+            )
+
+    if fmt == "lerobot":
+        from .lerobot import LeRobotFormatError, load_lerobot
+        try:
+            return load_lerobot(
+                path, max_episodes=getattr(args, "max_episodes", None))
+        except LeRobotFormatError as exc:
+            raise SystemExit(f"raftaar: {exc}")
+    return load_dataset(path)
+
+
 def _scan(args):
-    data = load_dataset(args.path)
+    data = _load(args)
+    adapter = data["info"].get("_adapter")
+    if adapter:
+        print(f"\n  read as LeRobotDataset: {adapter['episodes_read']} episodes, "
+              f"phases by {adapter['phase_method']}, "
+              f"trajectories compared in {adapter['spatial_dims_from']}")
     report = scan(data)
     out = Path(args.out or args.path)
     out.mkdir(parents=True, exist_ok=True)
@@ -56,7 +103,7 @@ def _scan(args):
 
 def _validate(args):
     from .validate import evaluate
-    data = load_dataset(args.path)
+    data = _load(args)
     print(f"\ntraining policies on {data['info']['dataset_name']} ...\n")
     res = evaluate(data["episodes"], n_trials=args.trials)
     labels = {"nominal": "nominal conditions", "gap": "inside coverage gap"}
@@ -86,10 +133,20 @@ def main(argv=None):
     c = sub.add_parser("scan", help="diagnose a dataset without training")
     c.add_argument("path")
     c.add_argument("--out", default=None)
+    c.add_argument("--format", choices=["auto", "raftaar", "lerobot"],
+                   default="auto",
+                   help="dataset format (default: detect from the directory)")
+    c.add_argument("--max-episodes", type=int, default=None,
+                   dest="max_episodes",
+                   help="read only the first N episodes (large hub datasets)")
     c.set_defaults(func=_scan)
 
     v = sub.add_parser("validate", help="train policies and test the predictions")
     v.add_argument("path")
+    v.add_argument("--format", choices=["auto", "raftaar", "lerobot"],
+                   default="auto")
+    v.add_argument("--max-episodes", type=int, default=None,
+                   dest="max_episodes")
     v.add_argument("--trials", type=int, default=60)
     v.set_defaults(func=_validate)
 

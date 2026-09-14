@@ -11,6 +11,8 @@ All of it is CPU-only and O(minutes) on a laptop.
 
 from __future__ import annotations
 
+from typing import Sequence
+
 import numpy as np
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
@@ -78,7 +80,8 @@ def participation_ratio(X: np.ndarray) -> float:
 # ----------------------------------------------------------------------------
 
 def averaging_hazard(episodes: list[dict], phase: str, n_waypoints: int = 8,
-                     max_modes: int = 3) -> dict:
+                     max_modes: int = 3,
+                     spatial_dims: Sequence[int] | None = None) -> dict:
     """
     Do the demonstrations of this phase form more than one strategy, and if so,
     is their *average* a strategy nobody demonstrated?
@@ -88,8 +91,17 @@ def averaging_hazard(episodes: list[dict], phase: str, n_waypoints: int = 8,
     density, the converged policy is one no operator would recognise -- and the
     training loss will not tell you.
     """
-    sigs = [strategy_signature(ep["observation.state"][ep["phase"] == phase][:, :3],
-                               n_waypoints) for ep in episodes]
+    # Which state columns describe *where the robot is*. The synthetic robot
+    # puts end-effector xyz first, but a joint-space arm does not, and silently
+    # treating the first three joint angles as a position is the kind of wrong
+    # that still produces plausible-looking numbers. The adapter supplies this;
+    # None keeps the original behaviour.
+    dims = list(range(3)) if spatial_dims is None else list(spatial_dims)
+    sigs = [
+        strategy_signature(
+            ep["observation.state"][ep["phase"] == phase][:, dims], n_waypoints)
+        for ep in episodes
+    ]
     S = _standardize(np.asarray(sigs))
 
     # Project first. Fitting full-covariance mixtures in the raw waypoint space
@@ -289,6 +301,14 @@ def representation_shards(episodes: list[dict]) -> dict:
     that was nudged, a lighting change, a different operator session -- the
     policy sees these as distinct worlds and silently splits its capacity.
     """
+    # Real LeRobot datasets ship encoded video, not precomputed image features.
+    # Returning "no shards detected" there would be a lie -- we did not look --
+    # so the absence is reported as its own state and `_findings` skips it.
+    if not all("observation.image_features" in ep for ep in episodes):
+        return {"available": False, "n_shards": 1, "silhouette": 0.0,
+                "reason": "no observation.image_features in this dataset; "
+                          "visual sharding was not assessed"}
+
     M = np.asarray([ep["observation.image_features"].mean(0) for ep in episodes])
     Mz = _standardize(M)
 
@@ -299,7 +319,7 @@ def representation_shards(episodes: list[dict]) -> dict:
         if s > best["silhouette"]:
             best = {"k": k, "silhouette": float(s), "labels": lab}
 
-    out = {"n_shards": 1, "silhouette": best["silhouette"],
+    out = {"available": True, "n_shards": 1, "silhouette": best["silhouette"],
            "shard_sizes": [len(M)], "cka_between": 1.0}
 
     if best["silhouette"] > 0.55:
@@ -360,17 +380,26 @@ def scan(data: dict, reference: dict | None = None) -> dict:
     """
     eps = data["episodes"]
     info = data["info"]
+    if not eps:
+        raise ValueError(
+            "no episodes in this dataset. If it is a LeRobotDataset, check that "
+            "data/**/*.parquet exists and contains observation.state and action."
+        )
     action_names = info["features"]["action"].get("names")
+    # Recorded by whichever adapter built this dataset; see metrics.averaging_hazard.
+    spatial_dims = info.get("spatial_dims")
     phases = list(dict.fromkeys(np.concatenate([ep["phase"] for ep in eps]).tolist()))
 
     report = {
         "dataset": info.get("dataset_name", "unknown"),
         "n_episodes": len(eps),
         "n_frames": int(sum(len(ep["action"]) for ep in eps)),
-        "averaging": [averaging_hazard(eps, ph) for ph in phases],
+        "averaging": [averaging_hazard(eps, ph, spatial_dims=spatial_dims)
+                      for ph in phases],
         "coverage": coverage(eps),
         "entropy": conditional_action_entropy(eps, names=action_names),
         "shards": representation_shards(eps),
+        "adapter": info.get("_adapter"),
         "actuators": actuator_health(eps, action_names),
     }
     report["findings"] = _findings(report, reference)

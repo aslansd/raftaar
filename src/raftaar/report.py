@@ -44,8 +44,28 @@ def write_markdown(report: dict, path: Path) -> None:
     L.append(f"\n- Condition-space gap ratio: **{c['gap_ratio']:.1%}**")
     L.append(f"- Intrinsic dimensionality of visited states: "
              f"**{c['intrinsic_dim']:.2f}**")
-    L.append(f"- Feature shards: **{report['shards']['n_shards']}** "
-             f"(CKA between largest two: {report['shards']['cka_between']:.2f})")
+    shards = report["shards"]
+    if not shards.get("available", True):
+        # Say the check did not run. "0 shards" would read as a clean result.
+        L.append(f"- Feature shards: **not assessed** — {shards.get('reason', '')}")
+    elif "cka_between" in shards:
+        L.append(f"- Feature shards: **{shards['n_shards']}** "
+                 f"(CKA between largest two: {shards['cka_between']:.2f})")
+    else:
+        L.append(f"- Feature shards: **{shards['n_shards']}**")
+
+    adapter = report.get("adapter")
+    if adapter:
+        # How the dataset was interpreted belongs next to the findings: two
+        # scans that segmented phases differently are not comparable.
+        L.append("\n## How this dataset was read\n")
+        L.append(f"- Source format: **{adapter.get('source')}**"
+                 f" (codebase {adapter.get('codebase_version', 'unknown')})")
+        L.append(f"- Phase labels: **{adapter.get('phase_method')}**"
+                 f" — derived, not present in the dataset")
+        L.append(f"- Trajectories compared in: **{adapter.get('spatial_dims_from')}**")
+        if adapter.get("episodes_skipped"):
+            L.append(f"- Episodes skipped: **{adapter['episodes_skipped']}**")
     path.write_text("\n".join(L) + "\n")
 
 
@@ -77,13 +97,37 @@ def plot(data: dict, report: dict, path: Path) -> None:
     """Write the four-panel diagnostic figure. Requires the `plot` extra."""
     plt = _pyplot()
     eps = data["episodes"]
+
+    # Axis labels have to describe what was actually plotted. On a joint-space
+    # arm the trajectory axes are joint angles, not metres, and the condition
+    # axes are whatever varied at episode start -- not necessarily an object.
+    adapter = (data.get("info") or {}).get("_adapter")
+    synthetic = adapter is None
+    state_names = ((data.get("info") or {}).get("features", {})
+                   .get("observation.state", {}).get("names")) or []
+    dims = (data.get("info") or {}).get("spatial_dims") or [0, 1, 2]
+
+    def space_label(i: int) -> str:
+        if synthetic:
+            return ["x (m)", "y (m)", "z (m)"][i]
+        if i < len(dims) and dims[i] < len(state_names):
+            return state_names[dims[i]]
+        return f"state dim {dims[i] if i < len(dims) else i}"
+
+    def cond_label(i: int) -> str:
+        if synthetic:
+            return ["object x (m)", "object y (m)"][i]
+        cond = report.get("coverage", {}).get("condition_dims") or []
+        if i < len(cond) and cond[i] < len(state_names):
+            return f"{state_names[cond[i]]} at episode start"
+        return f"condition dim {i}"
     fig, ax = plt.subplots(2, 2, figsize=(11, 8.5))
     fig.suptitle(f"Raftaar — {report['dataset']}", fontsize=13, y=0.98)
 
     # -- 1. the averaging hazard, drawn ------------------------------------
     a0 = ax[0, 0]
     sigs = np.asarray([
-        strategy_signature(e["observation.state"][e["phase"] == "approach"][:, :3])
+        strategy_signature(e["observation.state"][e["phase"] == "approach"][:, dims])
         for e in eps])
     k = max(1, report["averaging"][0]["n_modes"])
     lab = (KMeans(k, n_init=10, random_state=0).fit_predict(_standardize(sigs))
@@ -94,15 +138,22 @@ def plot(data: dict, report: dict, path: Path) -> None:
         t = e["observation.state"][e["phase"] == "approach"]
         a0.plot(t[:, 0], t[:, 1], color=colors[lab[i] % 4], lw=0.8, alpha=0.5)
     mean_traj = np.stack([_resample(
-        e["observation.state"][e["phase"] == "approach"][:, :3], 60) for e in eps]).mean(0)
+        e["observation.state"][e["phase"] == "approach"][:, dims], 60)
+        for e in eps]).mean(0)
     a0.plot(mean_traj[:, 0], mean_traj[:, 1], color="#d1342f", lw=2.6,
             label="mean of demonstrations")
-    a0.add_patch(plt.Circle(POST_XY, POST_RADIUS, color="#d1342f", alpha=0.22))
-    a0.text(POST_XY[0], POST_XY[1], "obstacle", ha="center", va="center", fontsize=8)
+    if synthetic:
+        a0.add_patch(plt.Circle(POST_XY, POST_RADIUS, color="#d1342f", alpha=0.22))
+    if synthetic:
+        # The obstacle exists in the synthetic environment only. Drawing it on a
+        # real dataset would invent a hazard that is not in the data.
+        a0.text(POST_XY[0], POST_XY[1], "obstacle", ha="center", va="center",
+                fontsize=8)
     a0.set_title(f"Approach strategies: {k} mode(s)\n"
                  f"averaging hazard {report['averaging'][0]['hazard_ratio']:.1f}x",
                  fontsize=10)
-    a0.set_xlabel("x (m)"); a0.set_ylabel("y (m)"); a0.legend(fontsize=8)
+    a0.set_xlabel(space_label(0)); a0.set_ylabel(space_label(1))
+    a0.legend(fontsize=8)
 
     # -- 2. coverage --------------------------------------------------------
     a1 = ax[0, 1]
@@ -117,7 +168,7 @@ def plot(data: dict, report: dict, path: Path) -> None:
     a1.axhspan(*HOLE_Y_RANGE, color="#d1342f", alpha=0.07)
     a1.set_title(f"Task-condition coverage — gap "
                  f"{report['coverage']['gap_ratio']:.0%}", fontsize=10)
-    a1.set_xlabel("object x (m)"); a1.set_ylabel("object y (m)")
+    a1.set_xlabel(cond_label(0)); a1.set_ylabel(cond_label(1))
 
     # -- 3. conditional action entropy -------------------------------------
     a2 = ax[1, 0]
@@ -133,6 +184,20 @@ def plot(data: dict, report: dict, path: Path) -> None:
 
     # -- 4. feature shards ---------------------------------------------------
     a3 = ax[1, 1]
+    if not all("observation.image_features" in e for e in eps):
+        # Most real datasets ship video rather than precomputed features. An
+        # empty panel saying so is more honest than an invented scatter.
+        a3.text(0.5, 0.5,
+                "no image features in this dataset\nvisual sharding not assessed",
+                ha="center", va="center", fontsize=9, color="#666",
+                transform=a3.transAxes)
+        a3.set_title("Episode feature space — not assessed", fontsize=10)
+        a3.set_xticks([]); a3.set_yticks([])
+        fig.tight_layout()
+        fig.savefig(path, dpi=150)
+        plt.close(fig)
+        return
+
     M = np.asarray([e["observation.image_features"].mean(0) for e in eps])
     P = PCA(2).fit_transform(_standardize(M))
     ns = report["shards"]["n_shards"]
