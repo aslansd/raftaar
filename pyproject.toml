@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "raftaar"
-version = "0.2.0"
+version = "0.3.0"
 description = "Know what your robot demonstrations will teach, before you train. Predicts which policy class will fail on a dataset, and where."
 readme = "README.md"
 requires-python = ">=3.10"

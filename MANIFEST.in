@@ -3,6 +3,7 @@ include README.md
 include CHANGELOG.md
 include PUBLISHING.md
 include TESTING.md
+include RUNNING-ON-LEROBOT.md
 recursive-include tests *.py
 recursive-include examples *.md *.py
 recursive-include web *.py *.html *.md

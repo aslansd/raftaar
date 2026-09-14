@@ -83,8 +83,17 @@ the Hugging Face Hub:
 
 ```bash
 pip install "raftaar[lerobot]"
-raftaar scan ~/.cache/huggingface/lerobot/<repo_id> --max-episodes 50
+hf download lerobot/aloha_sim_transfer_cube_human --repo-type dataset \
+    --local-dir ~/lerobot-data/aloha --exclude "videos/*"
+raftaar scan ~/lerobot-data/aloha --max-episodes 50
 ```
+
+Step by step, including where the datasets are and what to check first:
+[RUNNING-ON-LEROBOT.md](RUNNING-ON-LEROBOT.md).
+
+Both published layouts are read — **v2.x** (one episode per parquet) and
+**v3.0** (many episodes per file). Episodes are separated on the
+`episode_index` column, which exists in both.
 
 ```python
 from raftaar import scan
@@ -228,7 +237,7 @@ rather than eyeballed. Without daftar it behaves exactly like
 
 ```bash
 pip install -e ".[dev]"
-pytest -q                  # 53 tests
+pytest -q          # 60 tests
 ```
 
 The detector tests are the ones that matter. Every fault is *injected

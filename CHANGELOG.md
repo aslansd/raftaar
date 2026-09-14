@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.3.0 — LeRobotDataset v3.0
+
+### Reads the v3.0 layout
+
+`LeRobotDataset:v3.0` packs **many episodes into a single parquet file**, where
+v2.x wrote one episode per file. 0.2.0 read v2.x only, and on a v3 dataset it
+raised `LeRobotFormatError: no episode parquet files` — a clean failure rather
+than a wrong answer, but a dataset it could not open.
+
+Episodes are now separated on the **`episode_index` column**, which exists in
+both layouts, so the reader no longer depends on file naming at all. That was
+the second bug: discovery globbed `data/**/episode_*.parquet`, and v3 names its
+files `file-0000.parquet`, so the glob found nothing. It now matches any parquet
+under `data/` and lets the column do the work.
+
+Writing the v3 fixture is what caught this. The unit tests passed against a v2
+fixture throughout.
+
+### `--max-episodes` now counts episodes, not files
+
+**A behaviour change**, and the reason this is 0.3.0 rather than 0.2.1. Under
+v2.x, slicing the file list and counting episodes were the same thing. Under v3
+one file can hold forty episodes, so `--max-episodes 10` would have read forty.
+The limit is now applied while reading.
+
+### Web template
+
+The masthead is split across a tag for the two-tone colour:
+
+```html
+<div class="brand">Raf<span>taar</span></div>
+```
+
+so the product name never appears as a contiguous string, and every rename
+searched for `DemoScope` and missed it. The `<title>` was contiguous and updated
+correctly — which is why the browser tab read *Raftaar* while the page still
+read *DemoScope*. There is now a test that strips tags before comparing, since
+substring matching cannot catch this.
+
+### Added
+
+`RUNNING-ON-LEROBOT.md` — where the datasets actually are, how to download
+without the videos, and what the scan header line means before you read any
+findings.
+
+60 tests, up from 53.
+
 ## 0.2.0 — real datasets
 
 Months 1–3 of the plan: the library reads **LeRobotDataset** directories, so the

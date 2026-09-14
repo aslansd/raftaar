@@ -5,7 +5,7 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-Expect **53 passed**. Nothing should skip unless `pyarrow` or `matplotlib` is
+Expect **60 passed**. Nothing should skip unless `pyarrow` or `matplotlib` is
 absent.
 
 ---
@@ -15,8 +15,8 @@ absent.
 | File | Tests | Needs | Covers |
 |---|---|---|---|
 | `tests/test_detectors.py` | 14 | nothing | the five detectors, scored against injected ground truth |
-| `tests/test_packaging.py` | 15 | nothing | public API, CLI, reporting, optional dependencies |
-| `tests/test_lerobot.py` | 24 | `pyarrow` | the LeRobotDataset adapter |
+| `tests/test_packaging.py` | 17 | nothing | public API, CLI, reporting, optional dependencies |
+| `tests/test_lerobot.py` | 29 | `pyarrow` | the LeRobotDataset adapter |
 
 ---
 
@@ -134,7 +134,7 @@ the segmentation was a guess and the per-phase results are weaker.
 ## Before a release
 
 ```bash
-pytest -q                                   # 53 passed
+pytest -q                                   # 60 passed
 raftaar scan datasets/clean --out /tmp/r    # runs clean
 python -m build && python -m twine check dist/*
 ```
