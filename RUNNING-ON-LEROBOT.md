@@ -143,7 +143,7 @@ early rather than after you have scanned thirty of the same shape:
 | `lerobot/aloha_sim_transfer_cube_human` | simulated, clean, bimanual — a sane baseline |
 | `lerobot/aloha_sim_insertion_human` | same rig, harder task |
 | `lerobot/pusht` | 2-D, tiny, fast; different action space entirely |
-| an `so100`/`so101` community dataset | the single-arm convention the adapter targets; find one at `?other=LeRobot` |
+| `lerobot/svla_so100_pickplace` or `so101` community dataset | the single-arm convention the adapter targets; find one at `?other=LeRobot` |
 | `lerobot/droid_1.0.1` | large and messy. Use `--max-episodes 200` and expect problems |
 
 For each: record the header line, the findings, and anything the adapter got
