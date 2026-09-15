@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.3.1 — first contact with real data
+
+Five hub datasets scanned. All read cleanly on the v3.0 format with zero
+episodes skipped, which is the months 1–3 milestone. Three bugs surfaced that
+only real data could have shown, all of the same kind: **the tool stating a
+conclusion it had not earned.**
+
+### It no longer invents a gripper
+
+PushT is a 2-D pushing task with no gripper and no joints. The adapter fell back
+to "last channel is the gripper" — an SO-100/Aloha convention — picked the
+agent's **y coordinate**, segmented phases on it, and reported *Phase labels:
+gripper* as fact.
+
+Now: if feature names are published and none of them is a gripper, that is an
+answer rather than a reason to guess. The positional fallback applies only when
+no names exist at all, and only for action spaces of four dimensions or more,
+because a 2-D action space is not an arm and there is nothing for the convention
+to be true about. Phases then fall back to `thirds`, which the report says.
+
+### "Train with confidence" is gone
+
+A no-findings report used to end with that sentence. On PushT it appeared under
+a scan that had misidentified the gripper, mislabelled the columns as joints,
+and skipped visual sharding entirely.
+
+A quiet report now states what was assumed to produce it — guessed phases,
+unavailable feature names, unassessed sharding — so *nothing was found* is not
+read as *nothing is there*. Where no assumptions were needed, it still notes
+that the thresholds are calibrated against the synthetic environment.
+
+### Labels no longer claim knowledge they lack
+
+`first-3-joints` was reported for datasets that publish no feature names, where
+the columns could be anything. Those now read
+`first-N-state-dims (names unavailable)`.
+
+### Added
+
+`ROADMAP.md`, written against the scan results rather than a plan. Its first
+priority is the thing those results exposed: four of five datasets produced zero
+findings, with hazard ratios three to twenty times below the synthetic
+threshold, and two phases returning a numerical zero that is a failure to
+measure rather than a clean result.
+
 ## 0.3.0 — LeRobotDataset v3.0
 
 ### Reads the v3.0 layout

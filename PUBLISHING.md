@@ -4,7 +4,6 @@
 
 ```bash
 cd raftaar
-python3 -m venv .venv 
 source .venv/bin/activate
 
 # 1. Bump the version in TWO places — they must match
@@ -13,26 +12,33 @@ source .venv/bin/activate
 
 # 2. Write the CHANGELOG entry first, not last
 
-# 3. Build and check
-pip install --upgrade pip
-pip install build twine
+# 3. Verify
+pytest -q                                  # 53 passed
+python -m raftaar.cli synth clean --episodes 120
+raftaar scan datasets/clean --out reports/clean
+
+# 4. Build and check
 rm -rf dist build src/*.egg-info
 python -m build
 python -m twine check dist/*
 
-# 4. Upload
+# 5. Test the artifact, not the source tree
+python -m venv /tmp/check
+/tmp/check/bin/pip install dist/raftaar-*.whl
+/tmp/check/bin/raftaar --help
+/tmp/check/bin/python -c "import raftaar; print(raftaar.__version__)"
+
+# 6. Upload
 python -m twine upload dist/*
 git tag v0.2.0 && git push --tags
 
-# 5. Confirm — pip caches the index page and PyPI's CDN lags a minute or two
+# 7. Confirm — pip caches the index page and PyPI's CDN lags a minute or two
 pip install --no-cache-dir -U raftaar
-
-# 6. Verify
-pip install pytest
-pytest -q                                            # 60 passed
-python -m raftaar.cli synth clean --episodes 120
-raftaar scan datasets/clean --out reports/clean
 ```
+
+Step 5 is the one people skip. It catches packaging mistakes the test suite
+cannot see: a module missing from the wheel, a data file absent from
+`MANIFEST.in`, an entry point that does not resolve.
 
 ---
 
