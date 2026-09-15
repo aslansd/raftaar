@@ -29,7 +29,7 @@ pip install --no-cache-dir -U raftaar
 
 # 6. Verify
 pip install pytest
-pytest -q                                            # 53 passed
+pytest -q                                            # 60 passed
 python -m raftaar.cli synth clean --episodes 120
 raftaar scan datasets/clean --out reports/clean
 ```
