@@ -175,7 +175,7 @@
     <div class="card">
       <h2>Findings</h2>
       {% if not report.findings %}
-        <p style="margin:0;color:var(--ink-soft)">Nothing trips a detector. Train with confidence.</p>
+        <p style="margin:0;color:var(--ink-soft)">Nothing trips a detector on this synthetic dataset.</p>
       {% endif %}
       {% for f in report.findings %}
       <div class="f {{ f.severity }}">
