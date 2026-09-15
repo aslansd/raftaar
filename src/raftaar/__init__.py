@@ -1,6 +1,6 @@
 """Raftaar — know what your demonstrations will teach, before you train."""
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 from .metrics import scan
 from .synth import DatasetSpec, FaultSpec, build_dataset, load_dataset

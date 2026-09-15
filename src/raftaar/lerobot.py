@@ -147,7 +147,16 @@ def infer_gripper_dim(names: Sequence[str] | None,
         for i, name in enumerate(names):
             if any(hint in name.lower() for hint in GRIPPER_HINTS):
                 return i
-    if actions is not None and actions.ndim == 2 and actions.shape[1] >= 2:
+        # Names were published and none of them is a gripper. That is an answer,
+        # not a reason to guess: PushT is a 2-D pusher with no gripper at all,
+        # and the last-channel fallback picked its y coordinate, segmented
+        # "phases by gripper" on it, and reported the result as authoritative.
+        return None
+
+    if actions is not None and actions.ndim == 2 and actions.shape[1] >= 4:
+        # No names at all. Last channel is the SO-100/SO-101/Aloha convention,
+        # but only for arms: a 2- or 3-dimensional action space is not an arm,
+        # so there is nothing for the convention to be true about.
         return actions.shape[1] - 1
     return None
 
@@ -165,10 +174,16 @@ def infer_spatial_dims(names: Sequence[str] | None,
         if 2 <= len(cartesian) <= 3:
             return cartesian, "cartesian-by-name"
 
-    # Joint space. Comparing the first three joints is defensible -- on a
-    # typical arm they carry most of the gross spatial variation -- but it is
-    # not a position, and the label says so.
-    return list(range(min(3, n_dims))), "first-3-joints"
+    dims = list(range(min(3, n_dims)))
+    if names:
+        # Joint space. Comparing the first three joints is defensible -- on a
+        # typical arm they carry most of the gross spatial variation -- but it
+        # is not a position, and the label says so.
+        return dims, f"first-{len(dims)}-joints"
+
+    # No feature names published, so we do not know what these columns are.
+    # Calling them joints would be a guess dressed as a fact.
+    return dims, f"first-{len(dims)}-state-dims (names unavailable)"
 
 
 def segment_phases(actions: np.ndarray, states: np.ndarray,

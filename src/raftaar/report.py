@@ -22,8 +22,36 @@ def write_markdown(report: dict, path: Path) -> None:
 
     findings = report["findings"]
     if not findings:
-        L.append("\n## No findings\n\nNothing in this dataset trips a detector. "
-                 "Train with confidence.\n")
+        L.append("\n## No findings\n")
+        # How the dataset was read decides what a quiet report is worth. Where
+        # the adapter had to guess, "no findings" mostly means the detectors had
+        # little to work with -- and "train with confidence" would be advice
+        # given on the strength of an assumption.
+        adapter = report.get("adapter") or {}
+        weak = [reason for flag, reason in (
+            (adapter.get("phase_method") == "thirds",
+             "phase labels were guessed (equal thirds), so per-phase results "
+             "are weak"),
+            ("names unavailable" in str(adapter.get("spatial_dims_from", "")),
+             "the dataset publishes no feature names, so the compared columns "
+             "are unidentified"),
+            (not (report.get("shards") or {}).get("available", True),
+             "visual sharding was not assessed"),
+        ) if flag]
+
+        if not adapter:
+            L.append("Nothing in this dataset trips a detector.\n")
+        elif weak:
+            L.append("No detector fired -- but this dataset was read with "
+                     "assumptions, so read that as *nothing was found* rather "
+                     "than *nothing is there*:\n")
+            for reason in weak:
+                L.append(f"- {reason}")
+            L.append("")
+        else:
+            L.append("No detector fired. The thresholds are calibrated against "
+                     "the synthetic environment, so a quiet report on real data "
+                     "is weaker evidence than a loud one.\n")
     else:
         n_crit = sum(f["severity"] == "critical" for f in findings)
         L.append(f"\n## {len(findings)} findings ({n_crit} critical)\n")
