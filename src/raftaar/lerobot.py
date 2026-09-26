@@ -231,9 +231,20 @@ def segment_phases(actions: np.ndarray, states: np.ndarray,
 # the adapter
 # --------------------------------------------------------------------------
 
+#: Columns that identify *who or what produced* an episode rather than what the
+#: robot did. If present they are carried through per episode, because they are
+#: the only labels on the hub that can act as ground truth for a detected
+#: strategy split.
+GROUPING_HINTS = (
+    "collector_id", "operator_id", "user_id", "demonstrator",
+    "session_id", "task_index", "task_category", "building",
+)
+
+
 def load_lerobot(path: str | Path, max_episodes: int | None = None,
                  state_key: str = "observation.state",
-                 action_key: str = "action") -> dict:
+                 action_key: str = "action",
+                 grouping_keys: Sequence[str] | None = None) -> dict:
     """Load a LeRobotDataset directory into the structure Raftaar scans.
 
     ::
@@ -246,6 +257,12 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
     `max_episodes` reads a prefix of the dataset, which is the difference
     between a thirty-second look and a ten-minute one on the larger hub
     datasets.
+
+    `grouping_keys` names per-episode metadata columns to carry through, for
+    example ``["collector_id"]``. Defaults to whichever of
+    :data:`GROUPING_HINTS` the dataset actually has. These are not used by any
+    detector; they exist so a detected strategy split can be checked against a
+    partition somebody else recorded.
     """
     root = Path(path).expanduser()
     info_path = root / "meta" / "info.json"
@@ -269,6 +286,13 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
 
     state_names = _feature_names(info, state_key)
     action_names = _feature_names(info, action_key)
+
+    probe = _load_table(files[0])
+    wanted_groups = [
+        k for k in (grouping_keys if grouping_keys is not None else GROUPING_HINTS)
+        if k in probe
+    ]
+    del probe
 
     episodes: list[dict] = []
     methods: list[str] = []
@@ -315,6 +339,12 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
                 "action": actions,
                 "phase": phases,
             }
+            # One value per episode: these columns are constant within an
+            # episode by construction, so the first row is the episode's value.
+            for key in wanted_groups:
+                column = table.get(key)
+                if column is not None and len(column):
+                    episode.setdefault("meta", {})[key] = column[rows[0]]
             # Carry any precomputed visual features through; most hub datasets
             # have none, and representation_shards reports that rather than
             # guessing.
@@ -351,6 +381,7 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
         "spatial_dims": spatial_dims,
         "_adapter": {
             "source": "lerobot",
+            "grouping_keys": wanted_groups,
             "codebase_version": info.get("codebase_version"),
             "phase_method": max(set(methods), key=methods.count) if methods else "none",
             "phase_method_counts": {m: methods.count(m) for m in set(methods)},

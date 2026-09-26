@@ -145,8 +145,8 @@ def averaging_hazard(episodes: list[dict], phase: str, n_waypoints: int = 8,
 
     # Guard against BIC splitting a single blob: real strategies separate.
     sep, explained = 0.0, 0.0
+    lab = gm.predict(S) if n_modes > 1 else np.zeros(len(S), dtype=int)
     if n_modes > 1:
-        lab = gm.predict(S)
         if len(set(lab)) > 1:
             sep = float(silhouette_score(S, lab))
 
@@ -165,6 +165,11 @@ def averaging_hazard(episodes: list[dict], phase: str, n_waypoints: int = 8,
 
     return {
         "phase": phase,
+        # Which strategy each episode was assigned to. Kept so a detected
+        # partition can be compared against a known one -- an operator id, a
+        # session, a task variant -- which is the only way to find out whether
+        # the strategies are real without hand-labelling trajectories.
+        "mode_labels": [int(v) for v in lab],
         "n_modes": n_modes,
         "hazard_ratio": hazard,       # in within-strategy standard deviations
         "separation": sep,            # silhouette of the strategy split

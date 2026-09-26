@@ -268,8 +268,26 @@ def load_dataset(path: str | Path) -> dict:
     """Read a dataset back. A real LeRobotDataset adapter goes here."""
     path = Path(path)
     info = json.loads((path / "meta" / "info.json").read_text())
+
+    # Per-episode metadata, including which strategy the generator used. It was
+    # already being written to episodes.jsonl and never read back, so the
+    # generator's own ground truth was unavailable to anything downstream --
+    # which is exactly what is needed to check whether a detected split is real.
+    meta_by_index: dict[int, dict] = {}
+    meta_path = path / "meta" / "episodes.jsonl"
+    if meta_path.is_file():
+        for line in meta_path.read_text().splitlines():
+            if line.strip():
+                record = json.loads(line)
+                meta_by_index[record.get("episode_index")] = record
+
     episodes = []
-    for p in sorted((path / "data").glob("episode_*.npz")):
+    for i, p in enumerate(sorted((path / "data").glob("episode_*.npz"))):
         z = np.load(p, allow_pickle=True)
-        episodes.append({k: z[k] for k in z.files})
+        episode = {k: z[k] for k in z.files}
+        meta = meta_by_index.get(i)
+        if meta is not None:
+            episode["meta"] = {k: v for k, v in meta.items()
+                               if k not in ("episode_index", "length")}
+        episodes.append(episode)
     return {"info": info, "episodes": episodes}
