@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.4.1 — read the audit instead of guessing
+
+A hub-wide audit of `features[k].names` was published at
+[`laa1991/lerobot-dataset-field-audit`](https://huggingface.co/datasets/laa1991/lerobot-dataset-field-audit):
+25% of datasets have semantic names, 40% have placeholders (`motor_0`, …), 30%
+have none. It resolves the gripper channel for the datasets where that is
+determinable and marks the rest as *not determinable* rather than guessing.
+
+**New `raftaar.field_audit`.** Where the audit has an answer, the LeRobot
+adapter uses it in preference to matching names against `GRIPPER_HINTS`; where
+it does not, inference proceeds as before. The manifest records which happened
+(`_adapter.gripper_source`), so a scan says whether the gripper was read or
+inferred.
+
+The reader is deliberately tolerant: the audit is not ours to version, so
+renamed columns, a missing file or an unparseable shape are reported through
+`missing_columns` and the audit behaves as though it knows nothing. A reader
+that hard-failed on a renamed column would be worse than no reader.
+
+### Fixed
+
+An indentation error introduced while wiring the audit in broke episode
+splitting for v3.0 layouts -- 30 episodes across 3 files were read as 3. Caught
+by the existing v3 tests, which is what they were written for.
+
 ## 0.4.0 — calibration against known groupings
 
 Raftaar could not distinguish "this dataset is unimodal" from "these thresholds
