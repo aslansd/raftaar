@@ -244,7 +244,9 @@ GROUPING_HINTS = (
 def load_lerobot(path: str | Path, max_episodes: int | None = None,
                  state_key: str = "observation.state",
                  action_key: str = "action",
-                 grouping_keys: Sequence[str] | None = None) -> dict:
+                 grouping_keys: Sequence[str] | None = None,
+                 field_audit: Any = None,
+                 dataset_id: str | None = None) -> dict:
     """Load a LeRobotDataset directory into the structure Raftaar scans.
 
     ::
@@ -257,6 +259,12 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
     `max_episodes` reads a prefix of the dataset, which is the difference
     between a thirty-second look and a ten-minute one on the larger hub
     datasets.
+
+    `field_audit` is an optional :class:`raftaar.field_audit.FieldAudit`. Where
+    it resolves the gripper channel for this dataset, that answer is used in
+    preference to matching feature names against :data:`GRIPPER_HINTS` -- it is
+    someone else's checked work and covers datasets whose `names` are
+    placeholders. Where it has no answer, inference proceeds as before.
 
     `grouping_keys` names per-episode metadata columns to carry through, for
     example ``["collector_id"]``. Defaults to whichever of
@@ -286,6 +294,15 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
 
     state_names = _feature_names(info, state_key)
     action_names = _feature_names(info, action_key)
+
+    # Ask the audit first; fall back to inference per episode below.
+    audited_gripper = None
+    gripper_source = "inferred"
+    if field_audit is not None:
+        key = dataset_id or info.get("repo_id") or root.name
+        audited_gripper = field_audit.gripper_index(key, "state")
+        if audited_gripper is not None:
+            gripper_source = f"field-audit ({key})"
 
     probe = _load_table(files[0])
     wanted_groups = [
@@ -330,7 +347,10 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
                 skipped.append(f"{file.name}: episode with {states.shape[0]} frames")
                 continue
 
-            gripper = infer_gripper_dim(state_names, states)
+            # Prefer the published audit; fall back to name matching.
+            gripper = audited_gripper
+            if gripper is None:
+                gripper = infer_gripper_dim(state_names, states)
             phases, method = segment_phases(actions, states, gripper)
             methods.append(method)
 
@@ -382,6 +402,7 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
         "_adapter": {
             "source": "lerobot",
             "grouping_keys": wanted_groups,
+            "gripper_source": gripper_source,
             "codebase_version": info.get("codebase_version"),
             "phase_method": max(set(methods), key=methods.count) if methods else "none",
             "phase_method_counts": {m: methods.count(m) for m in set(methods)},
