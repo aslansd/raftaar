@@ -18,8 +18,11 @@ episodes as one trajectory, which yields a scan rather than an error.
 
     meta/info.json           features, fps, codebase version
     meta/tasks.jsonl         task index -> natural-language task string
-    meta/episodes.jsonl      v2.x only; v3 uses chunked parquet under
-                             meta/episodes/, which this reader does not need
+    meta/episodes.jsonl      v2.x per-episode metadata
+    meta/episodes/           v3 per-episode metadata, chunked parquet. This is
+                             where a dataset's own labels live -- DROID puts
+                             `collector_id` here, not in the data files -- so it
+                             is read whenever grouping keys are wanted.
 
 Two things real datasets do not have, which the detectors need:
 
@@ -93,6 +96,48 @@ def _feature_names(info: dict, key: str) -> list[str] | None:
             return [str(v) for v in names[0]]
         return [str(v) for v in names]
     return None
+
+
+def _read_episode_metadata(root: Path) -> dict[int, dict]:
+    """Per-episode metadata, from either layout.
+
+    v2.x writes `meta/episodes.jsonl`; v3.0 writes chunked parquet under
+    `meta/episodes/`. Columns beyond the bookkeeping ones are the dataset's own
+    labels -- who collected an episode, which building, which task variant --
+    and they are the only free ground truth on the hub for whether a detected
+    strategy split is real. They are not in the data files, so a reader that
+    only looks there finds nothing and reports the column as absent.
+    """
+    out: dict[int, dict] = {}
+
+    for record in _read_jsonl(root / "meta" / "episodes.jsonl"):
+        index = record.get("episode_index")
+        if index is not None:
+            out[int(index)] = dict(record)
+
+    episodes_dir = root / "meta" / "episodes"
+    if episodes_dir.is_dir():
+        for path in sorted(episodes_dir.glob("**/*.parquet")):
+            table = safe_read = None
+            try:
+                import pyarrow.parquet as pq
+
+                table = pq.read_table(path)
+            except Exception:
+                continue
+            columns = {name: table.column(name).to_pylist()
+                       for name in table.column_names}
+            indices = columns.get("episode_index")
+            if indices is None:
+                continue
+            for row, index in enumerate(indices):
+                if index is None:
+                    continue
+                record = out.setdefault(int(index), {})
+                for name, values in columns.items():
+                    if row < len(values) and values[row] is not None:
+                        record.setdefault(name, values[row])
+    return out
 
 
 def _parquet_files(root: Path, info: dict) -> list[Path]:
@@ -246,7 +291,8 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
                  action_key: str = "action",
                  grouping_keys: Sequence[str] | None = None,
                  field_audit: Any = None,
-                 dataset_id: str | None = None) -> dict:
+                 dataset_id: str | None = None,
+                 spread: bool = False) -> dict:
     """Load a LeRobotDataset directory into the structure Raftaar scans.
 
     ::
@@ -266,6 +312,18 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
     someone else's checked work and covers datasets whose `names` are
     placeholders. Where it has no answer, inference proceeds as before.
 
+    `spread` changes what `max_episodes` means. By default it reads a **prefix**
+    -- the first N episodes, which on a large dataset come from the first one or
+    two files. Hub datasets are written in collection order, so a prefix is
+    often a single session by a single operator. That is fine for a smoke test
+    and wrong for anything that compares against a grouping: the grouping
+    collapses to one level and no comparison is possible.
+
+    With `spread=True` the same budget is drawn evenly across every file
+    instead, which is what you want whenever the question involves who or what
+    produced the episodes. It may return slightly fewer episodes than asked, in
+    exchange for every file contributing.
+
     `grouping_keys` names per-episode metadata columns to carry through, for
     example ``["collector_id"]``. Defaults to whichever of
     :data:`GROUPING_HINTS` the dataset actually has. These are not used by any
@@ -281,8 +339,7 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
         )
 
     info = json.loads(info_path.read_text())
-    episode_meta = {e.get("episode_index"): e
-                    for e in _read_jsonl(root / "meta" / "episodes.jsonl")}
+    episode_meta = _read_episode_metadata(root)
     tasks = {t.get("task_index"): t.get("task")
              for t in _read_jsonl(root / "meta" / "tasks.jsonl")}
 
@@ -305,17 +362,33 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
             gripper_source = f"field-audit ({key})"
 
     probe = _load_table(files[0])
-    wanted_groups = [
-        k for k in (grouping_keys if grouping_keys is not None else GROUPING_HINTS)
-        if k in probe
-    ]
+    requested = list(grouping_keys) if grouping_keys is not None else list(GROUPING_HINTS)
+    # A key can live in the data table (constant per episode) or in the
+    # per-episode metadata. DROID's `collector_id` is the second kind.
+    meta_keys = set()
+    for record in episode_meta.values():
+        meta_keys.update(record)
+    wanted_groups = [k for k in requested if k in probe]
+    wanted_meta_groups = [k for k in requested
+                          if k not in probe and k in meta_keys]
     del probe
 
     episodes: list[dict] = []
     methods: list[str] = []
     skipped: list[str] = []
 
+    # With `spread`, take an equal share from every file rather than filling the
+    # budget from the first one.
+    per_file = None
+    if spread and max_episodes is not None and files:
+        # Floor, not ceiling. Rounding up exhausts the budget before the last
+        # files are reached, which silently drops the tail of the dataset --
+        # the opposite of what `spread` is for. Returning slightly fewer
+        # episodes than asked is the right trade when the point is coverage.
+        per_file = max(1, max_episodes // len(files))
+
     for file in files:
+        taken_here = 0
         table = _load_table(file)
         if state_key not in table or action_key not in table:
             skipped.append(f"{file.name}: missing {state_key} or {action_key}")
@@ -341,6 +414,8 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
         for rows in groups:
             if max_episodes is not None and len(episodes) >= max_episodes:
                 break
+            if per_file is not None and taken_here >= per_file:
+                break
             states = all_states[rows]
             actions = all_actions[rows]
             if states.shape[0] < 8:
@@ -365,6 +440,14 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
                 column = table.get(key)
                 if column is not None and len(column):
                     episode.setdefault("meta", {})[key] = column[rows[0]]
+
+            # Keys that live in meta/episodes/ rather than the data files.
+            if wanted_meta_groups:
+                index = int(idx[rows[0]]) if "episode_index" in table else len(episodes)
+                record = episode_meta.get(index, {})
+                for key in wanted_meta_groups:
+                    if key in record:
+                        episode.setdefault("meta", {})[key] = record[key]
             # Carry any precomputed visual features through; most hub datasets
             # have none, and representation_shards reports that rather than
             # guessing.
@@ -373,6 +456,7 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
                     episode["observation.image_features"] = value[rows]
                     break
             episodes.append(episode)
+            taken_here += 1
 
         if max_episodes is not None and len(episodes) >= max_episodes:
             break
@@ -401,7 +485,10 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
         "spatial_dims": spatial_dims,
         "_adapter": {
             "source": "lerobot",
-            "grouping_keys": wanted_groups,
+            "grouping_keys": sorted(set(wanted_groups) | set(wanted_meta_groups)),
+            "grouping_keys_from_episode_meta": wanted_meta_groups,
+            "sampling": ("spread across files" if spread else "prefix"),
+            "n_files_available": len(files),
             "gripper_source": gripper_source,
             "codebase_version": info.get("codebase_version"),
             "phase_method": max(set(methods), key=methods.count) if methods else "none",
