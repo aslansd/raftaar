@@ -207,3 +207,82 @@ class TestCleanDataSeverityIsSampleSizeDependent:
 
         ids = {f["id"]: f["severity"] for f in report["findings"]}
         assert "ACTION_INCONSISTENCY" in ids
+
+
+# --------------------------------------------------------------------------
+# calibration against a known partition
+# --------------------------------------------------------------------------
+
+class TestCalibrationAgainstKnownGrouping:
+    """Can the detector recover a partition somebody else recorded?
+
+    This is the only way to answer, from outside, whether a quiet report means
+    "unimodal data" or "thresholds that do not transfer". Hand-labelling
+    trajectories would settle it too, and costs far more; some datasets carry a
+    grouping recorded for other reasons -- which operator collected an episode,
+    which session -- and that is free ground truth.
+    """
+
+    def test_recovers_the_generators_own_strategy_labels(self, tmp_path):
+        """Positive control: the split must match the injected one exactly."""
+        from raftaar.calibration import agreement, episode_groups
+
+        spec = DatasetSpec(name="bimodal", n_episodes=120, seed=3,
+                           faults=FaultSpec(bimodal_detour=True))
+        data = load_dataset(build_dataset(spec, tmp_path / "d"))
+        truth = episode_groups(data, "mode")
+        assert truth is not None and len(set(truth)) == 2
+
+        report = scan(data)
+        split = [a for a in report["averaging"] if a["n_modes"] > 1]
+        assert split, "bimodal_detour should produce more than one strategy"
+
+        for phase_result in split:
+            result = agreement(phase_result["mode_labels"], truth)
+            assert result["usable"]
+            assert result["adjusted_rand"] > 0.9, phase_result["phase"]
+
+    def test_does_not_recover_a_random_grouping(self, tmp_path):
+        """Negative control: a detector that matches anything matches nothing."""
+        import numpy as np
+
+        from raftaar.calibration import agreement
+
+        spec = DatasetSpec(name="bimodal", n_episodes=120, seed=3,
+                           faults=FaultSpec(bimodal_detour=True))
+        data = load_dataset(build_dataset(spec, tmp_path / "d"))
+        report = scan(data)
+
+        rng = np.random.default_rng(0)
+        noise = rng.integers(0, 2, len(data["episodes"])).tolist()
+        for phase_result in report["averaging"]:
+            if phase_result["n_modes"] > 1:
+                result = agreement(phase_result["mode_labels"], noise)
+                assert abs(result["adjusted_rand"]) < 0.2
+
+    def test_unimodal_data_reports_why_no_comparison_was_possible(self, tmp_path):
+        """A null result must be distinguishable from a negative one."""
+        from raftaar.calibration import agreement, episode_groups
+
+        spec = DatasetSpec(name="clean", n_episodes=120, seed=3,
+                           faults=FaultSpec())
+        data = load_dataset(build_dataset(spec, tmp_path / "d"))
+        report = scan(data)
+        truth = episode_groups(data, "mode")
+
+        for phase_result in report["averaging"]:
+            if phase_result["n_modes"] == 1:
+                result = agreement(phase_result["mode_labels"], truth)
+                assert result["usable"] is False
+                assert result["adjusted_rand"] is None
+                assert "single strategy" in result["reason"]
+
+    def test_calibration_report_says_when_the_key_is_absent(self, tmp_path):
+        from raftaar.calibration import calibration_report
+
+        spec = DatasetSpec(name="clean", n_episodes=60, seed=1,
+                           faults=FaultSpec())
+        data = load_dataset(build_dataset(spec, tmp_path / "d"))
+        out = calibration_report(data, scan(data), "collector_id")
+        assert out["available"] is False
+        assert "collector_id" in out["reason"]
