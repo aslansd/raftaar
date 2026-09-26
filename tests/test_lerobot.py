@@ -458,3 +458,86 @@ class TestV3Layout:
         report = scan(load_lerobot(root))
         assert report["n_episodes"] == 40
         assert report["n_frames"] == 40 * 50
+
+
+class TestSpreadSampling:
+    """`max_episodes` reads a prefix by default, which is wrong for calibration.
+
+    Hub datasets are written in collection order, so the first N episodes of a
+    large dataset often come from one session by one operator. A comparison
+    against `collector_id` then has a single-level grouping and cannot run --
+    which looks like a null result and is really a sampling artefact.
+    """
+
+    def _multi_file(self, tmp_path, n_files=8, per_file=10, n_frames=40):
+        """One collector per file: the shape DROID has."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        root = tmp_path / "ds"
+        (root / "meta" / "episodes").mkdir(parents=True, exist_ok=True)
+        (root / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+        rng = np.random.default_rng(0)
+        meta = {"episode_index": [], "length": [], "collector_id": []}
+        ep = 0
+        for f in range(n_files):
+            rows = {k: [] for k in ("observation.state", "action",
+                                    "episode_index", "frame_index")}
+            for _ in range(per_file):
+                t = np.linspace(0, 1, n_frames)
+                state = np.zeros((n_frames, 6), dtype="float32")
+                for d in range(3):
+                    state[:, d] = t * rng.uniform(-1, 1)
+                gripper = np.ones(n_frames, dtype="float32")
+                gripper[n_frames // 3: 2 * n_frames // 3] = 0.0
+                state[:, 5] = gripper
+                rows["observation.state"] += state.tolist()
+                rows["action"] += np.diff(
+                    state, axis=0, prepend=state[:1]).astype("float32").tolist()
+                rows["episode_index"] += [ep] * n_frames
+                rows["frame_index"] += list(range(n_frames))
+                meta["episode_index"].append(ep)
+                meta["length"].append(n_frames)
+                meta["collector_id"].append(f"operator_{f}")
+                ep += 1
+            pq.write_table(pa.table(rows),
+                           root / "data" / "chunk-000" / f"file-{f:04d}.parquet")
+        pq.write_table(pa.table(meta),
+                       root / "meta" / "episodes" / "chunk-000.parquet")
+        names = ["j0", "j1", "j2", "j3", "j4", "gripper"]
+        (root / "meta" / "info.json").write_text(json.dumps({
+            "codebase_version": "v3.0", "repo_id": "t/ds", "fps": 30,
+            "total_episodes": ep,
+            "features": {
+                "observation.state": {"dtype": "float32", "shape": [6],
+                                      "names": names},
+                "action": {"dtype": "float32", "shape": [6], "names": names},
+            }}))
+        return root
+
+    def test_prefix_collapses_the_grouping(self, tmp_path):
+        from raftaar.calibration import episode_groups
+
+        root = self._multi_file(tmp_path)
+        data = load_lerobot(root, max_episodes=20)
+        groups = episode_groups(data, "collector_id")
+
+        assert len(data["episodes"]) == 20
+        # 20 episodes at 10 per file: only the first two files are touched.
+        assert len(set(groups)) == 2
+        assert data["info"]["_adapter"]["sampling"] == "prefix"
+
+    def test_spread_covers_every_file_on_the_same_budget(self, tmp_path):
+        from raftaar.calibration import episode_groups
+
+        root = self._multi_file(tmp_path)
+        data = load_lerobot(root, max_episodes=20, spread=True)
+        groups = episode_groups(data, "collector_id")
+
+        assert len(data["episodes"]) <= 20
+        assert len(set(groups)) == 8, "every file should contribute"
+        assert data["info"]["_adapter"]["sampling"] == "spread across files"
+
+    def test_spread_without_a_budget_reads_everything(self, tmp_path):
+        root = self._multi_file(tmp_path)
+        assert len(load_lerobot(root, spread=True)["episodes"]) == 80
