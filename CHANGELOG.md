@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.4.0 — calibration against known groupings
+
+Raftaar could not distinguish "this dataset is unimodal" from "these thresholds
+were tuned on a synthetic generator and do not transfer". From outside, those
+look identical, and hand-labelling trajectories to settle it is expensive.
+
+Some datasets carry a partition recorded for other reasons — `droid_1.0.1`
+labels each episode with a `collector_id`, `behavior1k-*` carries
+`observation.task_info`. Those are free ground truth for a weaker but decisive
+question: **where several producers demonstrably contributed, does the detector
+recover that partition at better than chance?** A method that never aligns with
+any known grouping is not detecting strategies.
+
+**New `raftaar.calibration`.** `agreement()` compares a detected split against a
+known one using adjusted Rand and adjusted mutual information, both
+chance-corrected. `calibration_report()` does it per phase.
+
+It reports `usable` and a `reason` alongside the scores, because a comparison
+that could not be made ("the detector found one strategy") must not read as one
+that was made and failed. A null result and a negative result are different
+findings.
+
+**`averaging_hazard` returns `mode_labels`** — which episode was assigned to
+which strategy. It was already computed and then discarded.
+
+**The LeRobot adapter carries per-episode metadata.** Columns matching
+`GROUPING_HINTS` (`collector_id`, `operator_id`, `session_id`, `task_index`,
+`task_category`, `building`, …) are passed through as `episode["meta"]`. No
+detector uses them; they exist to be checked against.
+
+**Fixed: the synthetic generator's ground truth was unreachable.** `build_dataset`
+wrote each episode's injected strategy to `meta/episodes.jsonl`, and
+`load_dataset` never read it back. The generator's own labels are now available,
+which is what makes the harness testable:
+
+```
+positive control (generator's strategy labels)   ARI = +1.000
+negative control (random grouping, same split)   ARI = -0.008
+```
+
+Four new tests covering both controls, the unusable case, and a missing key.
+
 ## 0.3.1 — first contact with real data
 
 Five hub datasets scanned. All read cleanly on the v3.0 format with zero
