@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.2 — a prefix is not a sample
+
+`max_episodes` read the **first** N episodes. On `lerobot/droid_1.0.1` — 95,658
+episodes across 168 files — `max_episodes=300` reads roughly the first 0.3%,
+which comes from one or two files. Hub datasets are written in collection order,
+so that is one session by one or two operators.
+
+For a smoke test that is fine. For comparing a detected split against
+`collector_id` it is fatal in a way that does not look like a bug: the grouping
+collapses to a single level, `calibration_report` returns `usable: False`, and
+the result reads as "no structure found" when it is really "no structure could
+have been found".
+
+**`load_lerobot(..., spread=True)`** draws the same budget evenly across every
+file instead. On a fixture with one collector per file:
+
+```
+spread=False   36 episodes,  2 distinct collectors
+spread=True    36 episodes, 12 distinct collectors
+```
+
+It uses the floor rather than the ceiling of `max_episodes / n_files`, so it may
+return slightly fewer episodes than asked in exchange for every file
+contributing. Rounding up exhausts the budget before the last files are reached,
+which drops the tail of the dataset — the opposite of the point.
+
+`_adapter.sampling` records which mode was used, so a scan says whether its
+episodes were a prefix or a spread.
+
 ## 0.4.1 — read the audit instead of guessing
 
 A hub-wide audit of `features[k].names` was published at
