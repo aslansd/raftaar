@@ -229,3 +229,80 @@ class TestWebTemplateBranding:
         stripped = re.sub(r"<[^>]+>", "", template.read_text(encoding="utf-8"))
         for old in ("DemoScope", "demoscope", "KineLens", "kinelens"):
             assert old not in stripped, f"{old} still in the rendered text"
+
+
+class TestFieldAuditReader:
+    """Reading a published audit instead of guessing at metadata.
+
+    The audit is not ours and its columns may be renamed, so the reader has to
+    degrade rather than crash: an unparseable audit must behave as though it
+    knows nothing, leaving the caller's own inference in place.
+    """
+
+    def _write(self, tmp_path, text):
+        path = tmp_path / "names-audit.csv"
+        path.write_text(text)
+        return path
+
+    def test_reads_gripper_indices(self, tmp_path):
+        from raftaar.field_audit import load_audit
+
+        path = self._write(tmp_path, (
+            "dataset,names_quality,gripper_indices_action,gripper_indices_state\n"
+            'lerobot/aloha,semantic,"[6, 13]","[6, 13]"\n'
+            "lerobot/droid_1.0.1,semantic,7,7\n"
+        ))
+        audit = load_audit(path)
+        assert audit.gripper_index("lerobot/aloha") == 6
+        assert audit.gripper_index("lerobot/droid_1.0.1") == 7
+        assert audit.quality_tier("lerobot/aloha") == "semantic"
+
+    def test_not_determinable_is_none_not_a_guess(self, tmp_path):
+        """'We looked and could not tell' must not become an index."""
+        from raftaar.field_audit import load_audit
+
+        path = self._write(tmp_path, (
+            "dataset,names_quality,gripper_indices_state\n"
+            "lerobot/pusht,absent,not determinable\n"
+            "some/placeholder,placeholder,\n"
+        ))
+        audit = load_audit(path)
+        assert audit.gripper_index("lerobot/pusht") is None
+        assert audit.gripper_index("some/placeholder") is None
+        assert audit.quality_tier("lerobot/pusht") == "absent"
+
+    def test_bare_name_matches_org_qualified(self, tmp_path):
+        from raftaar.field_audit import load_audit
+
+        path = self._write(tmp_path, (
+            "dataset,gripper_indices_state\nlerobot/droid_1.0.1,7\n"
+        ))
+        assert load_audit(path).gripper_index("droid_1.0.1") == 7
+
+    def test_unknown_dataset_returns_none(self, tmp_path):
+        from raftaar.field_audit import load_audit
+
+        path = self._write(tmp_path, "dataset,gripper_indices_state\na/b,3\n")
+        assert load_audit(path).gripper_index("not/in_audit") is None
+
+    def test_renamed_columns_degrade_rather_than_crash(self, tmp_path):
+        """The audit's schema is not ours to depend on."""
+        from raftaar.field_audit import load_audit
+
+        path = self._write(tmp_path, "dataset,something_else\na/b,3\n")
+        audit = load_audit(path)
+        assert audit.gripper_index("a/b") is None
+        assert any("gripper" in m for m in audit.missing_columns)
+
+    def test_missing_file_is_reported_not_raised(self, tmp_path):
+        from raftaar.field_audit import load_audit
+
+        audit = load_audit(tmp_path / "nope.csv")
+        assert len(audit) == 0
+        assert any("not found" in m for m in audit.missing_columns)
+
+    def test_empty_file_is_reported(self, tmp_path):
+        from raftaar.field_audit import load_audit
+
+        audit = load_audit(self._write(tmp_path, ""))
+        assert any("empty" in m for m in audit.missing_columns)
