@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.4.4 — report the ceiling, not just the score
+
+Running the harness on `lerobot/droid_1.0.1` produced ARI = 0.0235 against
+`collector_id`, which reads as "near zero, no alignment". It is not.
+
+Chance correction is not enough when the two partitions have very different
+cardinalities. Two detected strategies compared against **59** operator ids
+cannot score highly however good the detector is — there is no 2-way split of 59
+groups that agrees well with the 59-way partition, and ARI is compressed almost
+to nothing:
+
+| | ARI | ceiling | % of ceiling |
+|---|---|---|---|
+| `collector_id` (59 groups) | 0.0235 | 0.0332 | 71% |
+| `building` (49 groups) | 0.0060 | 0.0426 | 14% |
+
+`agreement()` now reports the **ceiling** each statistic could reach given the
+cardinalities, plus the score as a fraction of it. AMI is far less compressed
+than ARI and is the better headline when the cardinalities differ, so
+`calibration_report` gained `best_ami_fraction_of_ceiling` alongside the raw
+best ARI.
+
+The previous headline — raw `best_adjusted_rand` — was the wrong statistic for
+this comparison, and it would have made a directional result look like a null
+one.
+
 ## 0.4.3 — string columns were being dropped
 
 `_load_table` kept numeric and list columns and discarded everything else, with
