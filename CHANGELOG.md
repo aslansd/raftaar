@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.4.3 — string columns were being dropped
+
+`_load_table` kept numeric and list columns and discarded everything else, with
+the comment *"strings and nested structs are metadata; the detectors do not use
+them"*. That was true of the detectors and false of everything else.
+
+`collector_id`, `building` and `task_category` are strings. They are the only
+labels on the hub that can act as ground truth for a detected strategy split,
+and they were being thrown away before anything could see them.
+
+The failure was silent and pointed the wrong way. On `lerobot/droid_1.0.1` the
+adapter reported:
+
+```
+grouping_keys : ['task_index']
+collector_id  : available=False, reason="no per-episode 'collector_id'"
+```
+
+`task_index` is an integer and survived; the three string columns did not. Read
+at face value that says DROID has no operator labels. It has them — 
+`calibration_report` was describing the reader, not the dataset.
+
+String columns are now retained as `dtype=object`. Nested structs are still
+skipped: no current use, and they do not flatten to anything a grouping key
+could be.
+
+Three tests pin it, including that numeric columns are unaffected.
+
 ## 0.4.2 — a prefix is not a sample
 
 `max_episodes` read the **first** N episodes. On `lerobot/droid_1.0.1` — 95,658
