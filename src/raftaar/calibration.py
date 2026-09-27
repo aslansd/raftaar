@@ -43,14 +43,51 @@ def episode_groups(data: dict, key: str) -> list[Any] | None:
     return values
 
 
+def _ceiling(truth: "np.ndarray", n_modes: int, seed: int = 0) -> dict:
+    """The best scores a `n_modes`-way split could achieve against `truth`.
+
+    Chance correction is not enough when the two partitions have very different
+    cardinalities. Two detected strategies compared against 59 operators cannot
+    score highly however good the detector is: there is no 2-way split of 59
+    groups that agrees well with the 59-way partition. ARI in particular is
+    compressed almost to nothing.
+
+    Reporting the ceiling alongside the score is the difference between "0.023,
+    which is near zero" and "0.023 against a maximum of 0.032". Those are
+    different findings and the raw number does not distinguish them.
+    """
+    from sklearn.metrics import adjusted_mutual_info_score, adjusted_rand_score
+
+    rng = np.random.default_rng(seed)
+    order = np.unique(truth)
+    best_ari = best_ami = 0.0
+    # Try several ways of collapsing the known groups into `n_modes` blocks and
+    # keep the best; an exact search is combinatorial and unnecessary here.
+    for _ in range(24):
+        shuffled = rng.permutation(order)
+        assignment = {g: i % n_modes for i, g in enumerate(shuffled)}
+        candidate = np.asarray([assignment[g] for g in truth])
+        best_ari = max(best_ari, adjusted_rand_score(truth, candidate))
+        best_ami = max(best_ami, adjusted_mutual_info_score(truth, candidate))
+    # A contiguous split usually beats random collapses when groups are ordered.
+    half = np.isin(truth, order[: max(1, len(order) // n_modes)]).astype(int)
+    best_ari = max(best_ari, adjusted_rand_score(truth, half))
+    best_ami = max(best_ami, adjusted_mutual_info_score(truth, half))
+    return {"adjusted_rand": float(best_ari), "adjusted_mutual_info": float(best_ami)}
+
+
 def agreement(labels: Sequence[int], groups: Sequence[Any]) -> dict:
     """Compare a detected partition against a known one.
 
     Returns the adjusted Rand index and adjusted mutual information, both
-    corrected for chance, so a value near zero means "no better than random"
-    rather than "somewhat similar". Also returns the sizes of both partitions,
-    because a comparison against a grouping with one level, or with as many
-    levels as episodes, is meaningless and should be visible as such.
+    corrected for chance, together with the **ceiling** each could reach given
+    the two cardinalities, and the score as a fraction of that ceiling.
+
+    The ceiling matters more than it sounds. Comparing two detected strategies
+    against 59 operator ids caps ARI near 0.03 whatever the detector does, so a
+    raw ARI of 0.023 reads as "nothing" and is in fact most of what was
+    available. AMI is far less compressed and is the better headline when the
+    cardinalities differ; `fraction_of_ceiling` makes both comparable.
     """
     from sklearn.metrics import adjusted_mutual_info_score, adjusted_rand_score
 
@@ -62,15 +99,25 @@ def agreement(labels: Sequence[int], groups: Sequence[Any]) -> dict:
     n_groups = len(codes)
     usable = n_detected > 1 and 1 < n_groups < len(truth)
 
+    ari = float(adjusted_rand_score(truth, labels)) if usable else None
+    ami = float(adjusted_mutual_info_score(truth, labels)) if usable else None
+    ceiling = _ceiling(truth, n_detected) if usable else None
+
+    def _fraction(score, cap):
+        if score is None or not cap:
+            return None
+        return round(score / cap, 4) if cap > 1e-9 else None
+
     return {
         "n_episodes": int(len(truth)),
         "n_detected_modes": int(n_detected),
         "n_known_groups": int(n_groups),
         "usable": bool(usable),
-        "adjusted_rand": float(adjusted_rand_score(truth, labels)) if usable else None,
-        "adjusted_mutual_info": (
-            float(adjusted_mutual_info_score(truth, labels)) if usable else None
-        ),
+        "adjusted_rand": ari,
+        "adjusted_mutual_info": ami,
+        "ceiling": ceiling,
+        "ari_fraction_of_ceiling": _fraction(ari, (ceiling or {}).get("adjusted_rand")),
+        "ami_fraction_of_ceiling": _fraction(ami, (ceiling or {}).get("adjusted_mutual_info")),
         # Why a comparison could not be made, so a null result is not read as a
         # negative one.
         "reason": (
@@ -108,6 +155,8 @@ def calibration_report(data: dict, report: dict, key: str) -> dict:
 
     scored = [v["adjusted_rand"] for v in per_phase.values()
               if v.get("adjusted_rand") is not None]
+    fractions = [v["ami_fraction_of_ceiling"] for v in per_phase.values()
+                 if v.get("ami_fraction_of_ceiling") is not None]
     return {
         "key": key,
         "available": True,
@@ -117,4 +166,7 @@ def calibration_report(data: dict, report: dict, key: str) -> dict:
         # split that follows the operator will show up in the phase where the
         # operators actually differ, not necessarily in all of them.
         "best_adjusted_rand": max(scored) if scored else None,
+        # The headline when cardinalities differ: raw ARI is compressed by the
+        # mismatch, AMI much less so.
+        "best_ami_fraction_of_ceiling": max(fractions) if fractions else None,
     }
