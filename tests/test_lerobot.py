@@ -541,3 +541,91 @@ class TestSpreadSampling:
     def test_spread_without_a_budget_reads_everything(self, tmp_path):
         root = self._multi_file(tmp_path)
         assert len(load_lerobot(root, spread=True)["episodes"]) == 80
+
+
+class TestStringGroupingColumns:
+    """String columns must survive the reader.
+
+    `_load_table` used to keep only numeric and list columns, on the grounds
+    that "the detectors do not use strings". True of the detectors and false of
+    everything else: `collector_id`, `building` and `task_category` are strings,
+    and they are the only labels on the hub that can act as ground truth for a
+    detected strategy split.
+
+    The failure was silent and misleading -- every string-valued grouping key
+    reported as absent, which reads as "this dataset has no operator labels"
+    when it has them. Found on `lerobot/droid_1.0.1`, where the only key that
+    survived was the one integer among them, `task_index`.
+    """
+
+    def _with_string_columns(self, tmp_path, n_files=4, per_file=6, n_frames=40):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        root = tmp_path / "ds"
+        (root / "meta").mkdir(parents=True, exist_ok=True)
+        (root / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+        rng = np.random.default_rng(0)
+        ep = 0
+        for f in range(n_files):
+            rows = {k: [] for k in ("observation.state", "action",
+                                    "episode_index", "collector_id",
+                                    "building", "task_index")}
+            for _ in range(per_file):
+                t = np.linspace(0, 1, n_frames)
+                state = np.zeros((n_frames, 6), dtype="float32")
+                for d in range(3):
+                    state[:, d] = t * rng.uniform(-1, 1)
+                gripper = np.ones(n_frames, dtype="float32")
+                gripper[n_frames // 3: 2 * n_frames // 3] = 0.0
+                state[:, 5] = gripper
+                rows["observation.state"] += state.tolist()
+                rows["action"] += np.diff(
+                    state, axis=0, prepend=state[:1]).astype("float32").tolist()
+                rows["episode_index"] += [ep] * n_frames
+                rows["collector_id"] += [f"user_{f}"] * n_frames
+                rows["building"] += [f"site_{f % 2}"] * n_frames
+                rows["task_index"] += [0] * n_frames
+                ep += 1
+            pq.write_table(pa.table(rows),
+                           root / "data" / "chunk-000" / f"file-{f:04d}.parquet")
+        names = ["j0", "j1", "j2", "j3", "j4", "gripper"]
+        (root / "meta" / "info.json").write_text(json.dumps({
+            "codebase_version": "v3.0", "repo_id": "t/ds", "fps": 30,
+            "total_episodes": ep,
+            "features": {
+                "observation.state": {"dtype": "float32", "shape": [6],
+                                      "names": names},
+                "action": {"dtype": "float32", "shape": [6], "names": names},
+            }}))
+        return root
+
+    def test_string_grouping_keys_are_found(self, tmp_path):
+        from raftaar.calibration import episode_groups
+
+        root = self._with_string_columns(tmp_path)
+        data = load_lerobot(root, spread=True)
+
+        keys = data["info"]["_adapter"]["grouping_keys"]
+        assert "collector_id" in keys
+        assert "building" in keys
+
+        collectors = episode_groups(data, "collector_id")
+        assert collectors is not None
+        assert len(set(collectors)) == 4
+        assert all(isinstance(c, str) for c in collectors)
+
+    def test_string_values_survive_intact(self, tmp_path):
+        """Not coerced to float and not stringified into something else."""
+        from raftaar.calibration import episode_groups
+
+        root = self._with_string_columns(tmp_path)
+        data = load_lerobot(root, spread=True)
+        assert set(episode_groups(data, "building")) == {"site_0", "site_1"}
+
+    def test_numeric_columns_still_work(self, tmp_path):
+        """The fix must not disturb the columns that already worked."""
+        root = self._with_string_columns(tmp_path)
+        data = load_lerobot(root, spread=True)
+        assert "task_index" in data["info"]["_adapter"]["grouping_keys"]
+        assert data["episodes"][0]["observation.state"].dtype == np.float32
