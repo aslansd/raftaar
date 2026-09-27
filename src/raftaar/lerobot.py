@@ -167,12 +167,24 @@ def _load_table(path: Path) -> dict[str, np.ndarray]:
         column = table.column(name).to_pylist()
         if not column:
             continue
-        first = column[0]
+        first = next((v for v in column if v is not None), None)
+        if first is None:
+            continue
         if isinstance(first, (list, tuple, np.ndarray)):
             out[name] = np.asarray(column, dtype="float32")
-        elif isinstance(first, (int, float, bool, np.number)):
+        elif isinstance(first, (bool, int, float, np.number)):
             out[name] = np.asarray(column, dtype="float32")
-        # Strings and nested structs are metadata; the detectors do not use them.
+        elif isinstance(first, str):
+            # Strings were dropped here on the grounds that "the detectors do
+            # not use them". True of the detectors, false of everything else:
+            # `collector_id`, `building` and `task_category` are strings, and
+            # they are the only labels on the hub that can act as ground truth
+            # for a detected strategy split. Dropping them made every
+            # string-valued grouping key report as absent -- which reads as
+            # "this dataset has no operator labels" when it has them.
+            out[name] = np.asarray(column, dtype=object)
+        # Nested structs are still skipped: no current use, and they do not
+        # flatten to anything a grouping key could be.
     return out
 
 
