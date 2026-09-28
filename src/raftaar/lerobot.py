@@ -98,6 +98,20 @@ def _feature_names(info: dict, key: str) -> list[str] | None:
     return None
 
 
+def _hashable(value: Any) -> Any:
+    """Collapse a grouping value to something a partition can be built from.
+
+    `tasks` arrives as a list of strings per episode, which is unhashable, so
+    `set(groups)` fails and the grouping silently cannot be used. Joining is
+    the right collapse rather than taking the first element: two episodes
+    labelled with the same *set* of tasks belong together, and an episode with
+    two tasks is not the same group as one with the first of them.
+    """
+    if isinstance(value, (list, tuple, np.ndarray)):
+        return " | ".join(str(v) for v in value)
+    return value
+
+
 def _read_episode_metadata(root: Path) -> dict[int, dict]:
     """Per-episode metadata, from either layout.
 
@@ -293,6 +307,11 @@ def segment_phases(actions: np.ndarray, states: np.ndarray,
 #: the only labels on the hub that can act as ground truth for a detected
 #: strategy split.
 GROUPING_HINTS = (
+    # `tasks` is first because it is the most useful: `meta/episodes/*.parquet`
+    # carries which task each episode belongs to, it is semantically bound to
+    # separate trajectories, and it is independent of recording conditions. It
+    # is a list of strings per episode rather than a scalar.
+    "tasks", "task",
     "collector_id", "operator_id", "user_id", "demonstrator",
     "session_id", "task_index", "task_category", "building",
 )
@@ -451,7 +470,7 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
             for key in wanted_groups:
                 column = table.get(key)
                 if column is not None and len(column):
-                    episode.setdefault("meta", {})[key] = column[rows[0]]
+                    episode.setdefault("meta", {})[key] = _hashable(column[rows[0]])
 
             # Keys that live in meta/episodes/ rather than the data files.
             if wanted_meta_groups:
@@ -459,7 +478,7 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
                 record = episode_meta.get(index, {})
                 for key in wanted_meta_groups:
                     if key in record:
-                        episode.setdefault("meta", {})[key] = record[key]
+                        episode.setdefault("meta", {})[key] = _hashable(record[key])
             # Carry any precomputed visual features through; most hub datasets
             # have none, and representation_shards reports that rather than
             # guessing.
