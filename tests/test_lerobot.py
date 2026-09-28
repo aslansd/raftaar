@@ -629,3 +629,137 @@ class TestStringGroupingColumns:
         data = load_lerobot(root, spread=True)
         assert "task_index" in data["info"]["_adapter"]["grouping_keys"]
         assert data["episodes"][0]["observation.state"].dtype == np.float32
+
+
+class TestTasksGrouping:
+    """`tasks` from `meta/episodes/*.parquet` is the positive control.
+
+    It is per-episode, semantically bound to separate trajectories, and
+    independent of recording conditions -- which `collector_id` and `building`
+    are not. It arrives as a *list of strings*, so it has to be collapsed to
+    something hashable before a partition can be built from it.
+    """
+
+    def _tasks_dataset(self, tmp_path, n_files=4, per_file=15, n_frames=40,
+                       distinct=True):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        root = tmp_path / "ds"
+        (root / "meta" / "episodes").mkdir(parents=True, exist_ok=True)
+        (root / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+        rng = np.random.default_rng(0)
+        names_of_tasks = ["lift", "drawer", "stack"]
+        meta = {"episode_index": [], "length": [], "tasks": []}
+        ep = 0
+        for f in range(n_files):
+            rows = {k: [] for k in ("observation.state", "action",
+                                    "episode_index", "frame_index")}
+            for _ in range(per_file):
+                task = ep % 3
+                t = np.linspace(0, 1, n_frames)
+                state = np.zeros((n_frames, 6), dtype="float32")
+                detour = [1.2, -1.2, 0.0][task] if distinct else 0.0
+                state[:, 0] = t + rng.normal(0, 0.02, n_frames)
+                state[:, 1] = detour * np.sin(np.pi * t) + rng.normal(0, 0.02, n_frames)
+                state[:, 2] = ([0.0, 0.0, 1.0][task] if distinct else 0.0) * t
+                gripper = np.ones(n_frames, dtype="float32")
+                gripper[n_frames // 3: 2 * n_frames // 3] = 0.0
+                state[:, 5] = gripper
+                rows["observation.state"] += state.tolist()
+                rows["action"] += np.diff(
+                    state, axis=0, prepend=state[:1]).astype("float32").tolist()
+                rows["episode_index"] += [ep] * n_frames
+                rows["frame_index"] += list(range(n_frames))
+                meta["episode_index"].append(ep)
+                meta["length"].append(n_frames)
+                meta["tasks"].append([names_of_tasks[task]])
+                ep += 1
+            pq.write_table(pa.table(rows),
+                           root / "data" / "chunk-000" / f"file-{f:04d}.parquet")
+        pq.write_table(pa.table(meta),
+                       root / "meta" / "episodes" / "chunk-000.parquet")
+        feature_names = ["j0", "j1", "j2", "j3", "j4", "gripper"]
+        (root / "meta" / "info.json").write_text(json.dumps({
+            "codebase_version": "v3.0", "repo_id": "t/tasks", "fps": 30,
+            "total_episodes": ep,
+            "features": {
+                "observation.state": {"dtype": "float32", "shape": [6],
+                                      "names": feature_names},
+                "action": {"dtype": "float32", "shape": [6],
+                           "names": feature_names},
+            }}))
+        return root
+
+    def test_tasks_is_read_and_collapsed_to_a_hashable_group(self, tmp_path):
+        """A list of strings is unhashable; `set(groups)` would fail on it."""
+        from raftaar.calibration import episode_groups
+
+        root = self._tasks_dataset(tmp_path)
+        data = load_lerobot(root, spread=True)
+
+        assert "tasks" in data["info"]["_adapter"]["grouping_keys"]
+        groups = episode_groups(data, "tasks")
+        assert groups is not None
+        assert len(set(groups)) == 3            # hashable, and correct
+        assert all(isinstance(g, str) for g in groups)
+
+    def test_detector_recovers_a_task_partition_when_one_exists(self, tmp_path):
+        """The positive control, end to end.
+
+        Three tasks with genuinely different routes. If this does not recover
+        the partition, a null result on a real multi-task dataset says nothing
+        about the data.
+        """
+        from raftaar.calibration import calibration_report
+
+        root = self._tasks_dataset(tmp_path, per_file=25, n_files=6,
+                                   distinct=True)
+        data = load_lerobot(root, spread=True)
+        report = calibration_report(data, scan(data), "tasks")
+
+        usable = [v for v in report["per_phase"].values() if v["usable"]]
+        assert usable, "no phase produced a comparable split"
+        assert max(v["adjusted_rand"] for v in usable) > 0.9
+
+    def test_recovery_degrades_with_fewer_episodes_per_group(self, tmp_path):
+        """Episodes *per group* is what the comparison has to work with.
+
+        Same three tasks and the same trajectory differences, fewer episodes:
+        recovery falls from near-perfect to partial. This is the quantitative
+        version of why `droid_1.0.1` was a poor test -- 1.93 episodes per task
+        leaves nothing to lock onto, however good the detector is.
+        """
+        from raftaar.calibration import calibration_report
+
+        def best(n_files, per_file):
+            root = self._tasks_dataset(tmp_path / f"n{n_files}x{per_file}",
+                                       n_files=n_files, per_file=per_file,
+                                       distinct=True)
+            data = load_lerobot(root, spread=True)
+            report = calibration_report(data, scan(data), "tasks")
+            scores = [v["adjusted_rand"] for v in report["per_phase"].values()
+                      if v["usable"]]
+            return max(scores) if scores else 0.0
+
+        many = best(6, 25)    # 150 episodes, 50 per task
+        few = best(4, 15)     # 60 episodes, 20 per task
+        assert many > few
+
+    def test_phases_where_tasks_do_not_differ_report_one_mode(self, tmp_path):
+        """Not every phase should split: the tasks only diverge mid-trajectory.
+
+        A detector that found three modes everywhere would be responding to the
+        grouping rather than to the trajectories.
+        """
+        from raftaar.calibration import calibration_report
+
+        root = self._tasks_dataset(tmp_path, distinct=True)
+        data = load_lerobot(root, spread=True)
+        report = calibration_report(data, scan(data), "tasks")
+
+        single = [v for v in report["per_phase"].values()
+                  if v["n_detected_modes"] == 1]
+        assert single, "expected at least one phase with no split"
+        assert all(v["reason"] == "detector found a single strategy"
+                   for v in single)
