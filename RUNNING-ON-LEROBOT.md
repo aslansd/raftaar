@@ -151,6 +151,58 @@ wrong. That log is the raw material for the months 1–3 writeup.
 
 ---
 
+## Calibrating against a known grouping
+
+The most useful thing you can do with a multi-task dataset is ask whether the
+detected split recovers the task partition. `meta/episodes/*.parquet` carries a
+`tasks` column on most hub datasets, and it is free ground truth.
+
+```python
+from raftaar import scan
+from raftaar.lerobot import load_lerobot
+from raftaar.calibration import calibration_report, episode_groups
+
+data = load_lerobot("~/lerobot-data/austin", max_episodes=600, spread=True)
+print("tasks:", len(set(episode_groups(data, "tasks"))))
+
+report = scan(data)
+print(calibration_report(data, report, "tasks"))
+```
+
+**`spread=True` is not optional here.** Without it `max_episodes` reads a
+prefix, which on a large dataset is one or two files — often a single session,
+and the grouping collapses.
+
+### Choosing a dataset
+
+Few groups, many episodes each. The ratio that matters is **episodes per task**:
+
+| good | episodes/task |
+|---|---|
+| `roboturk` | 665 |
+| `ucsd_pick_and_place_dataset` | 452 |
+| `austin_sirius_dataset` | 280 |
+| `berkeley_rpt` | 227 |
+
+| poor | episodes/task |
+|---|---|
+| `droid_1.0.1` | 1.93 |
+| `robotwin_unified` | 1.17 |
+| `kaist_nonprehensile` | 1.04 |
+
+A dataset with one or two episodes per task has almost no repetition for a
+detector to lock onto, and no statistic repairs that.
+
+### Reading the result
+
+Read `ari_fraction_of_ceiling`, not the raw ARI. Comparing a 2-mode split
+against an *n*-way partition caps the achievable score — against 59 groups the
+ARI ceiling is about 0.17, so 0.02 is not "near zero".
+
+Also check `n_detected_modes`. A `usable: False` with reason *"detector found a
+single strategy"* is a null result, not a negative one, and `degenerate: True`
+means the phase carried no variance to cluster at all.
+
 ## Honest expectations
 
 I have not run this against a real hub dataset — no network access to Hugging

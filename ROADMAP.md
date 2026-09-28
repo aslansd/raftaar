@@ -2,7 +2,7 @@
 
 ## Where this stands
 
-Published on PyPI, reading real LeRobotDataset directories, 60 tests.
+Published on PyPI, reading real LeRobotDataset directories, 84 tests.
 
 | | Status |
 |---|---|
@@ -11,76 +11,75 @@ Published on PyPI, reading real LeRobotDataset directories, 60 tests.
 | Validation harness (`validate`) | shipped |
 | CLI, markdown + JSON + figure reports | shipped |
 | LeRobotDataset adapter, v2.x **and** v3.0 | shipped |
+| Calibration against a known grouping | shipped |
 | Browser demo | shipped |
-| **Detectors calibrated against real data** | **not started — this is the gap** |
-
-The first scans of five hub datasets ran without crashing, on the v3.0 format,
-with zero episodes skipped. That is the months 1–3 milestone: the tool reads
-real data.
-
-It is not evidence the tool works.
+| **Detectors calibrated against real data** | **partly answered — see below** |
+| **Does a warning predict a training failure** | **untested — the real claim** |
 
 ---
 
-## Read this before publishing any findings
+## The calibration result
 
-**Four of the five datasets produced zero findings.** aloha_transfer,
-aloha_insertion, pusht and so100 were all silent; droid raised one `info`.
+The question was whether thresholds tuned on a synthetic generator mean anything
+on the hub. It is now partly answered, on four multi-task datasets where the
+task partition acts as free ground truth:
 
-That is not five clean datasets. Real teleoperated data is not clean — DROID
-alone spans 76k episodes, dozens of operators and hundreds of scenes, and is
-the canonical example of the heterogeneity this tool claims to detect.
+| dataset | tasks | best phase | ARI | ceiling | % of ceiling |
+|---|---|---|---|---|---|
+| `austin_sirius_dataset` | 2 | approach | 0.9435 | 1.0000 | **94.3 %** |
+| `berkeley_rpt` | 4 | transport | 0.4033 | 0.5026 | **80.2 %** |
+| `ucsd_pick_and_place_dataset` | 3 | transport | 0.0375 | 0.9960 | 3.8 % |
+| `roboturk` | 3 | — | — | — | — (one mode in every phase) |
 
-The numbers say what happened:
+**Two of four transfer, strongly.** `austin_sirius_dataset` recovers the task
+partition in all three phases (0.94 / 0.53 / 0.76), which rules out a lucky
+phase. That is the first evidence the detectors measure something outside the
+synthetic environment.
 
-| dataset | phase | modes found | hazard ratio |
-|---|---|---|---|
-| synthetic `bimodal_detour` | approach | 2 | **2.8x** ← fires |
-| droid | approach | 3 | 0.53 |
-| pusht | release | 2 | 0.75 |
-| aloha_transfer | release | 2 | 0.15 |
-| so100 | transport | 2 | 0.22 |
+Three things it does not settle, all of which are now the roadmap:
 
-**The detectors are finding multiple strategies everywhere and calling none of
-them hazardous.** The threshold was tuned on a synthetic fault built to be
-detectable; on real data the same statistic lands three to twenty times lower.
+1. **Every one ran with `phase_method: thirds`.** No gripper was identifiable in
+   any of the four, so phase boundaries were guessed. A bad cut and an absence
+   of structure are indistinguishable from the outside.
+2. **`ucsd` finds two stable modes that align with nothing** — 3.8 % of a 0.996
+   ceiling, so not a cardinality artefact. Those modes are real to the detector.
+   Nobody knows what they are.
+3. **`roboturk` finds no modes at all.** Its `names` are `motor_0 … motor_7`,
+   the placeholder tier, so this is also the hardest dataset to interpret.
 
-Two possibilities, and they need to be told apart before any public claim:
-
-1. The threshold is miscalibrated — real multimodality is subtler than the
-   injected kind, and the tool is under-detecting.
-2. The strategy signature is degenerate on real trajectories — note
-   `hazard = 2.9e-17` for two `transport` phases, which is a numerical zero, not
-   a measurement. That is the signature collapsing, and it is currently reported
-   as a clean result.
-
-Until that is resolved, **a quiet Raftaar report on a real dataset means
-nothing**. Do not publish the five scans as evidence of anything.
+Earlier scans of `aloha_transfer`, `aloha_insertion`, `pusht`, `so100` and
+`droid_1.0.1` were quiet or weak. `droid` is now explained: 1.93 episodes per
+task and 59 collectors over 468 episodes leave almost no repetition to recover.
 
 ---
 
-## Priority 1 — Calibrate against reality
+## Priority 1 — Explain the two failures
 
-Nothing else matters until this is done.
+The positives are banked. The failures are now where the information is, because
+each has a specific, testable cause.
 
-**1.1 Find out whether `hazard ≈ 0` is a measurement or a failure.**
-Two phases returned `2e-17`. Instrument `strategy_signature`: if the residual
-after subtracting the endpoint-to-endpoint line has near-zero variance, the
-phase is too short or too linear to carry a signature, and the honest output is
-`insufficient signal`, not `0.00x`. Same class of bug as the `not assessed`
-shard state — a number that reads as a clean result and is really a
-non-measurement.
+**1.1 Better phase segmentation than equal thirds.** All four calibration
+datasets fell back to `thirds` because no gripper was identifiable. That is the
+single confound running through every result, positive and negative. A
+segmentation derived from the movement itself — velocity minima, dwell
+detection — would cost little and would let the failures be attributed.
 
-**1.2 Get ground truth on real data.** Take one dataset where you can inspect
+**1.2 Find out what `ucsd`'s two modes are.** They are stable across all three
+phases and unrelated to the task, so they are not noise. Plot them. If they turn
+out to be something like a left/right variant within a task, that is a genuine
+finding about the dataset; if they are an artefact of the signature, that is a
+detector fix.
+
+**1.3 Get hand-labelled ground truth.** Take one dataset where you can inspect
 the demonstrations, and label a handful of episodes by hand: which ones took a
 visibly different route? Then ask whether the clustering recovers your labels.
 Fifty episodes and an afternoon; without it, every threshold is a guess.
 
-**1.3 Re-derive the threshold.** Once you know what a real multimodal dataset
+**1.4 Re-derive the threshold.** Once you know what a real multimodal dataset
 scores, the threshold is an empirical question rather than a tuning parameter.
 Report it as a distribution over the datasets you scanned, not a constant.
 
-**1.4 Run `validate` on real data.** The harness exists and has never been
+**1.5 Run `validate` on real data.** The harness exists and has never been
 pointed at a hub dataset. It is the only thing that turns "the tool warns" into
 "the warning was right".
 

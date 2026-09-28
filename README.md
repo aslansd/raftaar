@@ -252,18 +252,46 @@ ground truth rather than opinion — and both directions are tested:
 
 ## Status
 
-Research prototype, honestly labelled.
+Research prototype, honestly labelled — with the first evidence that it
+transfers.
 
-The synthetic environment exists so the detectors can be scored against ground
-truth, and the LeRobot adapter means they now run on data nobody generated to
-order. What has **not** happened yet is the part that decides whether any of
-this is useful: a validation study across a few dozen public datasets, training
-small policies and testing whether the pre-training metrics predict
-post-training success.
+### Does it work on real data?
 
-Until that exists, treat the numbers as a hypothesis with a working
-implementation behind it.
+The open question was whether thresholds tuned on a synthetic generator mean
+anything on the Hugging Face hub. `raftaar.calibration` answers a testable
+version of it: **where a dataset records which task each episode belongs to,
+does the detected strategy split recover that partition better than chance?**
 
-## Licence
+Four multi-task hub datasets, 600 episodes each, drawn across every file:
 
-Apache 2.0.
+| dataset | tasks | best phase | ARI | ceiling | % of ceiling |
+|---|---|---|---|---|---|
+| `austin_sirius_dataset` | 2 | approach | 0.9435 | 1.0000 | **94.3 %** |
+| `berkeley_rpt` | 4 | transport | 0.4033 | 0.5026 | **80.2 %** |
+| `ucsd_pick_and_place_dataset` | 3 | transport | 0.0375 | 0.9960 | 3.8 % |
+| `roboturk` | 3 | — | — | — | — (one mode in every phase) |
+
+**Two of four transfer, and strongly.** On `austin_sirius_dataset` the split
+recovers the task partition in all three phases — 0.94 / 0.53 / 0.76 — which is
+not a lucky phase.
+
+The ceiling column matters: comparing a 2-mode split against an *n*-way
+partition caps the achievable score, so the raw number alone cannot be read.
+`ucsd` has a ceiling of 0.996 and reaches 3.8 % of it, so there is no
+cardinality excuse there — the two modes it finds are real to the detector and
+unrelated to the task.
+
+### What this does not establish
+
+- **All four ran with `phase_method: thirds`.** None exposes an identifiable
+  gripper, so phase boundaries were guessed in every case. Reaching 94 % with
+  guessed phases is encouraging; it also means the two failures cannot be
+  cleanly attributed, because a bad cut and an absence of structure look alike.
+- **"These tasks do not differ in trajectory" and "the detector missed a
+  difference" remain indistinguishable** on `ucsd` and `roboturk`. That is a
+  narrower version of the original problem, not a solution to it.
+- **No policy has been trained.** Whether a warning predicts a training failure
+  is still untested, and it is the claim the tool is really making.
+
+Treat the detectors as measuring something real on some datasets, with the
+boundary not yet mapped.

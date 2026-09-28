@@ -1,5 +1,30 @@
 # Changelog
 
+## Unreleased — calibration results on four hub datasets
+
+No code change. Recording the outcome, because it is the first evidence the
+detectors transfer beyond the synthetic environment.
+
+| dataset | tasks | best phase | ARI | ceiling | % of ceiling |
+|---|---|---|---|---|---|
+| `austin_sirius_dataset` | 2 | approach | 0.9435 | 1.0000 | **94.3 %** |
+| `berkeley_rpt` | 4 | transport | 0.4033 | 0.5026 | **80.2 %** |
+| `ucsd_pick_and_place_dataset` | 3 | transport | 0.0375 | 0.9960 | 3.8 % |
+| `roboturk` | 3 | — | — | — | — (one mode in every phase) |
+
+Two of four recover the task partition, `austin_sirius_dataset` in all three
+phases (0.94 / 0.53 / 0.76). Two do not, in different ways: `ucsd` finds two
+stable modes aligned with nothing at 3.8 % of a 0.996 ceiling, and `roboturk`
+finds no modes at all.
+
+Every one ran with `phase_method: thirds` — no gripper was identifiable in any
+of the four — which is the confound running through both the positives and the
+negatives. `README.md` and `ROADMAP.md` carry the full statement.
+
+Docs: `FIX-roboturk-crash.md` and `NEXT-roboturk.md` removed from the package —
+they were working notes, not documentation. The issue record moved to
+`docs/lerobot-4749-record.md`.
+
 ## 0.5.1 — a static phase no longer ends the scan
 
 `scan()` crashed on `lerobot/roboturk`:
