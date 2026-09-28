@@ -286,3 +286,58 @@ class TestCalibrationAgainstKnownGrouping:
         out = calibration_report(data, scan(data), "collector_id")
         assert out["available"] is False
         assert "collector_id" in out["reason"]
+
+
+class TestDegeneratePhases:
+    """A phase with no movement must not end the scan.
+
+    Fitting a Gaussian mixture to identical signatures raises deep inside
+    scikit-learn -- "ill-defined empirical covariance (singleton or collapsed
+    samples)" -- which is an accurate complaint expressed as a crash. It cost a
+    whole `roboturk` run: one static phase and the other two were lost with it.
+
+    The immediate cause was a scale-aware regulariser, `reg_covar = 1e-3 *
+    S.var()`, which goes to **zero** exactly when the data is degenerate and the
+    regularisation is most needed.
+    """
+
+    def _static_phase_dataset(self, tmp_path, n_episodes=60, n_frames=45):
+        """First third moves; the rest is frozen, identically in every episode."""
+        import numpy as np
+
+        from raftaar import DatasetSpec, FaultSpec, build_dataset, load_dataset
+
+        spec = DatasetSpec(name="degen", n_episodes=n_episodes, seed=0,
+                           faults=FaultSpec())
+        data = load_dataset(build_dataset(spec, tmp_path / "d"))
+        for episode in data["episodes"]:
+            state = episode["observation.state"]
+            hold = state.shape[0] // 3
+            state[hold:, :] = state[hold - 1, :]      # freeze after a third
+            episode["observation.state"] = state
+        return data
+
+    def test_scan_completes_when_a_phase_is_static(self, tmp_path):
+        data = self._static_phase_dataset(tmp_path)
+        report = scan(data)                     # must not raise
+        assert report["n_episodes"] == 60
+        assert report["averaging"]
+
+    def test_degenerate_phase_says_why(self, tmp_path):
+        """`n_modes = 1` from a failed fit and from a real single strategy are
+        different findings and must be distinguishable."""
+        data = self._static_phase_dataset(tmp_path)
+        report = scan(data)
+
+        degenerate = [a for a in report["averaging"] if a.get("degenerate")]
+        assert degenerate, "expected at least one phase with no variance"
+        for phase_result in degenerate:
+            assert phase_result["n_modes"] == 1
+            assert "no variance" in phase_result["reason"]
+            assert len(phase_result["mode_labels"]) == len(data["episodes"])
+
+    def test_other_phases_still_reported(self, tmp_path):
+        """One dead phase must not cost the phases that did have signal."""
+        data = self._static_phase_dataset(tmp_path)
+        report = scan(data)
+        assert any(not a.get("degenerate") for a in report["averaging"])
