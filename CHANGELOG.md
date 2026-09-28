@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.5.1 — a static phase no longer ends the scan
+
+`scan()` crashed on `lerobot/roboturk`:
+
+```
+ValueError: Fitting the mixture model failed because some components have
+ill-defined empirical covariance (singleton or collapsed samples).
+```
+
+The cause was a scale-aware regulariser, `reg_covar = 1e-3 * S.var()`, which
+goes to **zero** exactly when the strategy signatures are degenerate — the case
+where regularisation is needed most. It is now floored at `1e-6`.
+
+The deeper problem is that a phase can legitimately contain almost no movement
+in the compared columns, especially when phases were guessed by `thirds` rather
+than derived from a gripper, since an arbitrary cut can land on a stationary
+stretch. There is genuinely nothing to cluster there.
+
+`averaging_hazard` now detects that before fitting and returns
+`degenerate: True` with a reason, rather than raising. A failed fit is also
+caught per component count, so one bad `k` costs that `k` rather than the phase.
+
+This matters beyond not crashing: **`n_modes = 1` from a failed fit and
+`n_modes = 1` from a genuine single strategy are different findings**, and the
+report now distinguishes them. The other phases are reported either way — one
+dead phase used to take the whole run with it.
+
+84 tests.
+
 ## 0.5.0 — the task grouping
 
 `meta/episodes/*.parquet` carries a **`tasks`** column: which task each episode
