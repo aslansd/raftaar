@@ -88,6 +88,40 @@ a bare `403`, which looks like a name problem and is not.
 Not even after deleting the release. If 0.2.0 is wrong, ship 0.2.1. Do not
 delete and retry.
 
+### A 400 Bad Request on upload usually means "already uploaded"
+
+```
+ERROR  HTTPError: 400 Bad Request from https://upload.pypi.org/legacy/
+       Bad Request
+```
+
+PyPI refuses a filename it already holds, and the bare message does not say so.
+**Run `python -m twine upload --verbose dist/*`** and the real reason appears —
+almost always `File already exists`.
+
+This is easy to trigger by accident, because the PyPI project page is cached and
+can show an older version for several minutes after a successful upload. The
+sequence is: upload works → page still shows the previous version → conclude it
+failed → upload again → 400.
+
+Check what is actually published rather than what the page shows:
+
+```bash
+curl -s https://pypi.org/pypi/raftaar/json | python -c "
+import json,sys
+d=json.load(sys.stdin)
+print('latest:', d['info']['version'])
+print('all:', sorted(d['releases']))"
+```
+
+That reads the API directly and is never stale. If the version is there, the
+upload worked and there is nothing to do.
+
+Note also that a deleted release produces the *same* 400 forever: PyPI reserves
+filenames permanently, so a version number can never be reused even after the
+release is removed. If you genuinely need to replace a bad release, ship the
+next patch number.
+
 ### `pip install -U` will show you the old version
 
 For a minute or two after upload. Use `--no-cache-dir`, and check what is really
