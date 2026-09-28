@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.5.0 — the task grouping
+
+`meta/episodes/*.parquet` carries a **`tasks`** column: which task each episode
+belongs to. It is per-episode, semantically bound to separate trajectories, and
+independent of recording conditions — which is exactly what `collector_id` and
+`building` were not. It is now the first entry in `GROUPING_HINTS`.
+
+It arrives as a **list of strings** per episode, so `set(groups)` would have
+raised on it. List values are collapsed by joining rather than by taking the
+first element: two episodes labelled with the same *set* of tasks belong
+together, and an episode with two tasks is not the same group as one with the
+first of them.
+
+### Why this matters more than `collector_id`
+
+`droid_1.0.1` has 49,630 tasks for 95,658 episodes — **1.93 episodes per task** —
+and 59 `collector_id` values. Both groupings are nearly one-to-one with the
+episodes, so a 2-mode detector has almost no repetition to lock onto and the
+ceiling correction cannot repair it.
+
+The datasets worth testing are the ones with **few groups and many episodes
+each**: `roboturk` (3 tasks, 665 episodes/task), `ucsd_pick_and_place_dataset`
+(3, 452), `austin_sirius_dataset` (2, 280), `berkeley_rpt` (4, 227).
+
+### Validation
+
+On a fixture with three tasks and genuinely different routes, the detector
+recovers the task partition at **ARI = +1.000**, 100 % of ceiling, with three
+modes found from three tasks. Phases where the tasks do not diverge correctly
+report a single mode rather than splitting to match the grouping.
+
+Recovery is sample-size dependent and there is now a test that pins it: the same
+three tasks and the same trajectory differences score 1.000 at 50 episodes per
+task and 0.56 at 20. That is the quantitative form of why DROID was a poor test.
+
+81 tests.
+
 ## 0.4.4 — report the ceiling, not just the score
 
 Running the harness on `lerobot/droid_1.0.1` produced ARI = 0.0235 against
