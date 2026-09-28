@@ -104,6 +104,32 @@ def averaging_hazard(episodes: list[dict], phase: str, n_waypoints: int = 8,
     ]
     S = _standardize(np.asarray(sigs))
 
+    # Degenerate signatures: every episode reduced to (nearly) the same shape,
+    # so there is nothing to cluster. This happens when a phase carries almost
+    # no movement in the chosen columns -- common when phases were guessed by
+    # `thirds` rather than derived from a gripper, since an arbitrary cut can
+    # land on a stationary stretch.
+    #
+    # Fitting a mixture here raises deep inside scikit-learn ("ill-defined
+    # empirical covariance"), which is an accurate complaint expressed as a
+    # crash. Saying so plainly is better: it is a fact about the phase, not a
+    # failure of the run, and the other phases should still be reported.
+    if not np.all(np.isfinite(S)) or float(np.nanvar(S)) < 1e-12:
+        return {
+            "phase": phase,
+            "mode_labels": [0] * len(episodes),
+            "n_modes": 1,
+            "hazard_ratio": 0.0,
+            "silhouette": None,
+            "confounded": None,
+            "degenerate": True,
+            "reason": (
+                "strategy signatures carry no variance in this phase; nothing "
+                "to cluster. Usually means the phase contains little movement "
+                "in the compared columns."
+            ),
+        }
+
     # Project first. Fitting full-covariance mixtures in the raw waypoint space
     # needs far more episodes than anyone has; BIC would always return one mode.
     # We deliberately do NOT re-standardise: PCA's variance scaling is what
@@ -113,12 +139,31 @@ def averaging_hazard(episodes: list[dict], phase: str, n_waypoints: int = 8,
 
     # How many strategies? BIC over Gaussian mixtures.
     bics, models = [], []
-    reg = 1e-3 * float(S.var())          # scale-aware: stops components collapsing
+    # Scale-aware, but floored: a purely proportional regulariser goes to zero
+    # exactly when the data is degenerate, which is when it is needed most.
+    reg = max(1e-3 * float(S.var()), 1e-6)
     for k in range(1, min(max_modes, max(1, len(S) // 12)) + 1):
-        gm = GaussianMixture(k, covariance_type="full", reg_covar=reg,
-                             random_state=0, n_init=8).fit(S)
+        try:
+            gm = GaussianMixture(k, covariance_type="full", reg_covar=reg,
+                                 random_state=0, n_init=8).fit(S)
+        except (ValueError, np.linalg.LinAlgError):
+            # This k does not fit; lower k may still have. Stop adding
+            # components rather than losing the whole phase.
+            break
         bics.append(gm.bic(S))
         models.append(gm)
+
+    if not models:
+        return {
+            "phase": phase,
+            "mode_labels": [0] * len(episodes),
+            "n_modes": 1,
+            "hazard_ratio": 0.0,
+            "silhouette": None,
+            "confounded": None,
+            "degenerate": True,
+            "reason": "no mixture could be fitted to this phase's signatures",
+        }
     # BIC keeps falling as k grows -- real demonstration clusters always have
     # sub-structure -- so the minimum over-splits. Take the elbow instead: keep
     # adding strategies only while each one buys a substantial fraction of what
