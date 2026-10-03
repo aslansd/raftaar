@@ -2,7 +2,7 @@
 
 ## Where this stands
 
-Published on PyPI, reading real LeRobotDataset directories, 84 tests.
+Published on PyPI, reading real LeRobotDataset directories, 88 tests.
 
 | | Status |
 |---|---|
@@ -58,11 +58,37 @@ task and 59 collectors over 468 episodes leave almost no repetition to recover.
 The positives are banked. The failures are now where the information is, because
 each has a specific, testable cause.
 
-**1.1 Better phase segmentation than equal thirds.** All four calibration
-datasets fell back to `thirds` because no gripper was identifiable. That is the
-single confound running through every result, positive and negative. A
-segmentation derived from the movement itself — velocity minima, dwell
-detection — would cost little and would let the failures be attributed.
+**1.1 Phase segmentation. Velocity minima were tried and do not work.**
+
+All four calibration datasets fell back to `thirds` because no gripper was
+identifiable. That is the single confound running through every result.
+
+Cutting at speed minima was the obvious fix and is measurably worse. Against
+fixtures with known boundaries:
+
+| true boundaries | velocity | thirds |
+|---|---|---|
+| (40, 85) | 0.889 | **0.958** |
+| (25, 55) | **0.710** | 0.667 |
+| (60, 100) | 0.643 | **0.667** |
+
+0.747 against 0.764 on average. The cause is structural rather than tuning: an
+episode decelerates at the end of *every* segment including the last, so the two
+deepest interior minima are often the second and third boundaries instead of the
+first and second. It found `[63, 97]` where the truth was `(25, 55)`. Not
+shipped — a segmentation scoring below equal thirds makes every result harder to
+interpret.
+
+**Two directions left:**
+
+- **Segment on the action signal rather than the state.** A phase change is
+  often a change in *which channels are moving*, not a slowdown. Untried.
+- **Do not segment at all.** Run the detector on whole episodes and see whether
+  `austin_sirius` still separates at 94 %. If it does, phases were never
+  load-bearing and this entire confound dissolves.
+
+The second is the cheapest experiment available — a few hours — and informative
+whichever way it goes. **Do it first.**
 
 **1.2 Find out what `ucsd`'s two modes are.** They are stable across all three
 phases and unrelated to the task, so they are not noise. Plot them. If they turn
@@ -81,15 +107,25 @@ Report it as a distribution over the datasets you scanned, not a constant.
 
 **1.5 Run `validate` on real data.** The harness exists and has never been
 pointed at a hub dataset. It is the only thing that turns "the tool warns" into
-"the warning was right".
+"the warning was right", and it tests the claim the README actually makes.
+
+Until it runs, the honest one-line summary of raftaar is *"finds strategy splits
+that sometimes agree with task labels"*. That is real, and it is not the same
+claim.
 
 ## Priority 2 — Adapter robustness, driven by what real data showed
 
-**2.1 Feature names are often missing.** Several datasets published none, so the
-adapter fell back to positional conventions. 0.3.1 stops it guessing a gripper
-when names exist and none matches — the PushT bug, where a 2-D pusher's *y
-coordinate* was treated as a gripper and phases were segmented on it. Keep
-finding these: each one is a dataset the tool silently misread.
+**2.1 Feature names are often missing or non-standard.** Several datasets
+publish none, so the adapter fell back to positional conventions. 0.3.1 stopped
+it guessing a gripper when names exist and none matches — the PushT bug, where a
+2-D pusher's *y coordinate* was treated as a gripper and phases were segmented
+on it. 0.6.0 added `STATE_ALIASES` / `ACTION_ALIASES` for the `robomme` case,
+where `state` / `actions` read as a dataset with no action column at all, and
+records which names were resolved.
+
+Keep finding these: each one is a dataset the tool silently misread. Across 180
+datasets there are 129 distinct feature key names and only four are universal,
+so this category is not nearly exhausted.
 
 **2.2 Count how often `thirds` fires** across a larger sample. If phase
 segmentation is guessed for most of the hub, per-phase detection is mostly
@@ -113,6 +149,27 @@ half a robot without saying so.
   same treatment is probably owed to the other detectors.
 
 ---
+
+## Priority 4 — Read what upstream now records
+
+Three libraries have started recording values daftar's adapters reconstruct,
+because of issues raised while writing those adapters:
+
+| library | what it now records | adapter still reconstructs |
+|---|---|---|
+| cpm | `number_of_starts`, `initial_guess_supplied` (#85, merged) | `len(optimiser.initial_guess)` |
+| sbi | `summary["converged"]` (#2014 → #2018, merged) | `epochs_trained[-1] < max_num_epochs` |
+| MNE | `ICA.converged_` (#14366 merged, #14370 in review) | `n_iter_ < max_iter` |
+
+Each reconstruction is subtly wrong against the library's own definition — sbi
+uses `<=` where the adapter uses `<`, and MNE's `n_iter_` carried no convergence
+information at all for infomax before #14366. A reconstructed value drifts from
+the definition it imitates, silently, which is the thesis of the whole project
+demonstrated on its own code.
+
+`verify_three_upstreams.py` checks all three. Update each adapter to prefer the
+library's answer and record which source was used, as the LeRobot adapter
+already does with `gripper_source`.
 
 ## Explicitly not now
 
