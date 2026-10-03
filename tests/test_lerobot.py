@@ -763,3 +763,84 @@ class TestTasksGrouping:
         assert single, "expected at least one phase with no split"
         assert all(v["reason"] == "detector found a single strategy"
                    for v in single)
+
+
+class TestColumnAliases:
+    """Hub datasets do not agree on what the two core columns are called.
+
+    `robomme` ships `state` / `actions` / `image` -- no `observation.` prefix
+    and a plural `actions`. A reader matching only the canonical names skipped
+    every episode and then reported "no usable episodes", which describes the
+    reader rather than the dataset. Across 180 datasets there are 129 distinct
+    feature key names and only four are universal.
+    """
+
+    def _dataset(self, tmp_path, state_name, action_name, n_episodes=20,
+                 n_frames=40):
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        root = tmp_path / f"{state_name}-{action_name}"
+        (root / "meta").mkdir(parents=True, exist_ok=True)
+        (root / "data" / "chunk-000").mkdir(parents=True, exist_ok=True)
+        rng = np.random.default_rng(0)
+        rows = {state_name: [], action_name: [], "episode_index": [],
+                "frame_index": []}
+        for ep in range(n_episodes):
+            state = np.zeros((n_frames, 6), dtype="float32")
+            for d in range(3):
+                state[:, d] = np.linspace(0, 1, n_frames) * rng.uniform(-1, 1)
+            gripper = np.ones(n_frames, dtype="float32")
+            gripper[n_frames // 3: 2 * n_frames // 3] = 0.0
+            state[:, 5] = gripper
+            rows[state_name] += state.tolist()
+            rows[action_name] += np.diff(
+                state, axis=0, prepend=state[:1]).astype("float32").tolist()
+            rows["episode_index"] += [ep] * n_frames
+            rows["frame_index"] += list(range(n_frames))
+        pq.write_table(pa.table(rows),
+                       root / "data" / "chunk-000" / "file-0000.parquet")
+        (root / "meta" / "info.json").write_text(json.dumps({
+            "codebase_version": "v3.0", "repo_id": "t/aliases", "fps": 30,
+            "total_episodes": n_episodes, "features": {}}))
+        return root
+
+    def test_canonical_names_still_work(self, tmp_path):
+        root = self._dataset(tmp_path, "observation.state", "action")
+        data = load_lerobot(root)
+        assert len(data["episodes"]) == 20
+        assert data["info"]["_adapter"]["state_key"] == "observation.state"
+        assert data["info"]["_adapter"]["action_key"] == "action"
+
+    def test_robomme_style_names_are_read(self, tmp_path):
+        """`state` / `actions` -- the case that read as "no action column"."""
+        root = self._dataset(tmp_path, "state", "actions")
+        data = load_lerobot(root)
+        assert len(data["episodes"]) == 20
+        assert data["info"]["_adapter"]["state_key"] == "state"
+        assert data["info"]["_adapter"]["action_key"] == "actions"
+
+    def test_the_resolved_names_are_recorded(self, tmp_path):
+        """Which columns were read is part of how the dataset was interpreted.
+
+        Two scans that resolved different columns are not comparable, and the
+        manifest is the only place that could say so.
+        """
+        canonical = load_lerobot(
+            self._dataset(tmp_path, "observation.state", "action"))
+        aliased = load_lerobot(self._dataset(tmp_path, "state", "actions"))
+
+        assert canonical["info"]["_adapter"]["state_key"] == "observation.state"
+        assert aliased["info"]["_adapter"]["state_key"] == "state"
+        assert canonical["info"]["_adapter"]["action_key"] == "action"
+        assert aliased["info"]["_adapter"]["action_key"] == "actions"
+
+    def test_an_unreadable_dataset_says_what_it_looked_for(self, tmp_path):
+        """"No usable episodes" alone describes the reader, not the data."""
+        root = self._dataset(tmp_path, "foo", "bar")
+        with pytest.raises(LeRobotFormatError) as exc:
+            load_lerobot(root)
+        message = str(exc.value)
+        assert "no state/action column" in message
+        assert "observation.state" in message      # what it tried
+        assert "foo" in message and "bar" in message  # what it found
