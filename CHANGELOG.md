@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.6.0 — column aliases
+
+Hub datasets do not agree on what the two core columns are called. `robomme`
+ships `state` / `actions` / `image` — no `observation.` prefix, and a plural
+`actions` — so a reader matching only the canonical names skipped every episode
+and reported *"no usable episodes"*. That describes the reader, not the dataset.
+
+`load_lerobot` now resolves both columns through an alias list
+(`STATE_ALIASES`, `ACTION_ALIASES`) and records which names it actually used in
+`_adapter.state_key` / `_adapter.action_key`. Two scans that resolved different
+columns are not comparable, and the manifest is the only place that could say so.
+
+A dataset with neither now fails with what it looked for and what it found:
+
+```
+no usable episodes in <path>.
+  file-0000.parquet: no state/action column. Tried ('observation.state',
+  'state', ...) and ('action', 'actions', ...); the file has ['bar',
+  'episode_index', 'foo', 'frame_index']
+  If this dataset names its columns differently again, pass state_key= and
+  action_key= explicitly.
+```
+
+Four tests. 88 total.
+
+### Not shipped: velocity-based phase segmentation
+
+Every calibration result so far ran on `thirds` boundaries, because no gripper
+was identifiable in any of the four datasets. Cutting at speed minima instead
+seemed the obvious fix: a manipulation trajectory decelerates where one phase
+ends and the next begins.
+
+Measured against fixtures with known boundaries, it does not work:
+
+| true boundaries | velocity | thirds |
+|---|---|---|
+| (40, 85) | 0.889 | **0.958** |
+| (25, 55) | **0.710** | 0.667 |
+| (60, 100) | 0.643 | **0.667** |
+
+Worse on average (0.747 against 0.764). The reason is structural rather than a
+tuning problem: an episode decelerates at the end of *every* segment, including
+the last, so the two deepest interior minima are often the second and third
+boundaries rather than the first and second. Found cuts of `[63, 97]` where the
+truth was `(25, 55)`.
+
+Left out, and left on the roadmap. A segmentation that scores below equal thirds
+would make every result harder to interpret, not easier.
+
 ## Unreleased — calibration results on four hub datasets
 
 No code change. Recording the outcome, because it is the first evidence the
