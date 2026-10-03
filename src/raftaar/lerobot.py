@@ -302,6 +302,16 @@ def segment_phases(actions: np.ndarray, states: np.ndarray,
 # the adapter
 # --------------------------------------------------------------------------
 
+#: Key names other projects use for the same two columns. The hub is not
+#: consistent about this: `robomme` ships `state` / `actions` / `image` with no
+#: `observation.` prefix and a plural `actions`, and a reader matching only the
+#: canonical names treats it as a dataset with no action column at all. Across
+#: 180 datasets there are 129 distinct feature key names and only four are
+#: universal, so aliases are the rule rather than the exception.
+STATE_ALIASES = ("observation.state", "state", "observation.states", "obs.state")
+ACTION_ALIASES = ("action", "actions", "observation.action", "act")
+
+
 #: Columns that identify *who or what produced* an episode rather than what the
 #: robot did. If present they are carried through per episode, because they are
 #: the only labels on the hub that can act as ground truth for a detected
@@ -421,8 +431,21 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
     for file in files:
         taken_here = 0
         table = _load_table(file)
+
+        # Resolve the two columns by alias, once, from the first file that has
+        # them. A dataset that uses a non-canonical name is readable; one that
+        # has neither is not, and the difference should be visible.
+        if state_key not in table:
+            state_key = next((k for k in STATE_ALIASES if k in table), state_key)
+        if action_key not in table:
+            action_key = next((k for k in ACTION_ALIASES if k in table), action_key)
+
         if state_key not in table or action_key not in table:
-            skipped.append(f"{file.name}: missing {state_key} or {action_key}")
+            present = sorted(k for k in table if not k.startswith("index"))[:8]
+            skipped.append(
+                f"{file.name}: no state/action column. Tried {STATE_ALIASES} "
+                f"and {ACTION_ALIASES}; the file has {present}"
+            )
             continue
 
         # v2.x wrote one episode per parquet; v3.0 concatenates many episodes
@@ -494,7 +517,11 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
 
     if not episodes:
         raise LeRobotFormatError(
-            f"no usable episodes in {root}. Skipped: {skipped[:3]}")
+            f"no usable episodes in {root}.\n"
+            f"  {skipped[0] if skipped else 'no files were read'}\n"
+            f"  If this dataset names its columns differently again, pass "
+            f"state_key= and action_key= explicitly."
+        )
 
     spatial_dims, spatial_how = infer_spatial_dims(state_names,
                                                    episodes[0]["observation.state"].shape[1])
@@ -525,6 +552,8 @@ def load_lerobot(path: str | Path, max_episodes: int | None = None,
             "phase_method": max(set(methods), key=methods.count) if methods else "none",
             "phase_method_counts": {m: methods.count(m) for m in set(methods)},
             "spatial_dims_from": spatial_how,
+            "state_key": state_key,
+            "action_key": action_key,
             "gripper_dim": infer_gripper_dim(state_names,
                                              episodes[0]["observation.state"]),
             "episodes_read": len(episodes),
