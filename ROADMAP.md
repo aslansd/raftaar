@@ -150,27 +150,6 @@ half a robot without saying so.
 
 ---
 
-## Priority 4 — Read what upstream now records
-
-Three libraries have started recording values daftar's adapters reconstruct,
-because of issues raised while writing those adapters:
-
-| library | what it now records | adapter still reconstructs |
-|---|---|---|
-| cpm | `number_of_starts`, `initial_guess_supplied` (#85, merged) | `len(optimiser.initial_guess)` |
-| sbi | `summary["converged"]` (#2014 → #2018, merged) | `epochs_trained[-1] < max_num_epochs` |
-| MNE | `ICA.converged_` (#14366 merged, #14370 in review) | `n_iter_ < max_iter` |
-
-Each reconstruction is subtly wrong against the library's own definition — sbi
-uses `<=` where the adapter uses `<`, and MNE's `n_iter_` carried no convergence
-information at all for infomax before #14366. A reconstructed value drifts from
-the definition it imitates, silently, which is the thesis of the whole project
-demonstrated on its own code.
-
-`verify_three_upstreams.py` checks all three. Update each adapter to prefer the
-library's answer and record which source was used, as the LeRobot adapter
-already does with `gripper_source`.
-
 ## Explicitly not now
 
 - **More detectors.** Five that are calibrated beat eight that are not, and
