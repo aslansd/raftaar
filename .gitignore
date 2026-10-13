@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -8,3 +9,12 @@ dist/
 datasets/
 reports/
 *.png
+=======
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.DS_Store
+.env
+.ipynb_checkpoints/
+>>>>>>> b7e25f2 (Initial commit)

@@ -1,0 +1,64 @@
+{
+  "dataset": "so100",
+  "n_episodes": 50,
+  "n_frames": 19631,
+  "averaging": [
+    {
+      "phase": "transport",
+      "n_modes": 2,
+      "hazard_ratio": 0.22094653204936085,
+      "separation": 0.6317840183214289,
+      "condition_explained": 0.0,
+      "bic_curve": [
+        658.1597737387787,
+        617.6910358853626,
+        634.8350731802925
+      ]
+    }
+  ],
+  "coverage": {
+    "condition_dims": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "intrinsic_dim": 2.665996621406706,
+    "gap_ratio": 0.0,
+    "gap_cells": []
+  },
+  "entropy": {
+    "overall": 0.009169492870569229,
+    "per_phase": {
+      "transport": 0.009169492870569229
+    },
+    "dominant_channel": {
+      "transport": "main_gripper"
+    }
+  },
+  "shards": {
+    "available": false,
+    "n_shards": 1,
+    "silhouette": 0.0,
+    "reason": "no observation.image_features in this dataset; visual sharding was not assessed"
+  },
+  "adapter": {
+    "source": "lerobot",
+    "codebase_version": "v3.0",
+    "phase_method": "gripper",
+    "phase_method_counts": {
+      "gripper": 50
+    },
+    "spatial_dims_from": "first-3-joints",
+    "gripper_dim": 5,
+    "episodes_read": 50,
+    "episodes_skipped": 0,
+    "tasks": []
+  },
+  "actuators": {
+    "idle_channels": []
+  },
+  "findings": []
+}

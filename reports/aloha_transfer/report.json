@@ -1,0 +1,71 @@
+{
+  "dataset": "aloha_transfer",
+  "n_episodes": 50,
+  "n_frames": 20000,
+  "averaging": [
+    {
+      "phase": "transport",
+      "n_modes": 1,
+      "hazard_ratio": 2.153297592446757e-17,
+      "separation": 0.0,
+      "condition_explained": 0.0,
+      "bic_curve": [
+        673.11919942973,
+        681.0301201869271,
+        694.1921495003949
+      ]
+    },
+    {
+      "phase": "release",
+      "n_modes": 2,
+      "hazard_ratio": 0.15165987936699588,
+      "separation": 0.4600843928245778,
+      "condition_explained": 0.0,
+      "bic_curve": [
+        701.8386541528491,
+        663.3076836957679,
+        679.8535629806404
+      ]
+    }
+  ],
+  "coverage": {
+    "condition_dims": [],
+    "intrinsic_dim": 3.311073191301396,
+    "gap_ratio": 0.0,
+    "gap_cells": []
+  },
+  "entropy": {
+    "overall": 0.03449547477066517,
+    "per_phase": {
+      "release": 0.03041495755314827,
+      "transport": 0.03857599198818207
+    },
+    "dominant_channel": {
+      "release": "left_forearm_roll",
+      "transport": "left_gripper"
+    }
+  },
+  "shards": {
+    "available": false,
+    "n_shards": 1,
+    "silhouette": 0.0,
+    "reason": "no observation.image_features in this dataset; visual sharding was not assessed"
+  },
+  "adapter": {
+    "source": "lerobot",
+    "codebase_version": "v3.0",
+    "phase_method": "gripper",
+    "phase_method_counts": {
+      "gripper": 50
+    },
+    "spatial_dims_from": "first-3-joints",
+    "gripper_dim": 6,
+    "episodes_read": 50,
+    "episodes_skipped": 0,
+    "tasks": []
+  },
+  "actuators": {
+    "idle_channels": []
+  },
+  "findings": []
+}

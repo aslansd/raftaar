@@ -1,0 +1,39 @@
+{
+  "dataset_name": "clean",
+  "robot_type": "synthetic_3dof_pick_place",
+  "fps": 20,
+  "total_episodes": 120,
+  "features": {
+    "observation.state": {
+      "shape": [
+        7
+      ],
+      "names": [
+        "ee_x",
+        "ee_y",
+        "ee_z",
+        "gripper",
+        "obj_x",
+        "obj_y",
+        "t"
+      ]
+    },
+    "action": {
+      "shape": [
+        4
+      ],
+      "names": [
+        "d_ee_x",
+        "d_ee_y",
+        "d_ee_z",
+        "d_gripper"
+      ]
+    },
+    "observation.image_features": {
+      "shape": [
+        16
+      ]
+    }
+  },
+  "_injected_faults": []
+}

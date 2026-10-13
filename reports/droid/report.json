@@ -1,0 +1,108 @@
+{
+  "dataset": "droid",
+  "n_episodes": 50,
+  "n_frames": 14357,
+  "averaging": [
+    {
+      "phase": "transport",
+      "n_modes": 2,
+      "hazard_ratio": 0.11880340726457116,
+      "separation": 0.4897967635148818,
+      "condition_explained": 0.0,
+      "bic_curve": [
+        667.8236872739251,
+        618.4914009400349,
+        614.987715506937
+      ]
+    },
+    {
+      "phase": "release",
+      "n_modes": 3,
+      "hazard_ratio": 0.20021340062543783,
+      "separation": 0.8042990983232207,
+      "condition_explained": 0.0,
+      "bic_curve": [
+        690.3990662475536,
+        506.61692834301533,
+        431.2433770617696
+      ]
+    },
+    {
+      "phase": "approach",
+      "n_modes": 3,
+      "hazard_ratio": 0.5309616486889439,
+      "separation": 0.9021357958892292,
+      "condition_explained": 0.0,
+      "bic_curve": [
+        688.2015474589537,
+        536.0363622849311,
+        39.09613897011792
+      ]
+    }
+  ],
+  "coverage": {
+    "condition_dims": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "intrinsic_dim": 5.907958519002629,
+    "gap_ratio": 0.0,
+    "gap_cells": []
+  },
+  "entropy": {
+    "overall": 0.09549048046271007,
+    "per_phase": {
+      "approach": 0.15567663311958313,
+      "release": 0.0900675356388092,
+      "transport": 0.040727272629737854
+    },
+    "dominant_channel": {
+      "approach": "joint_3",
+      "release": "joint_1",
+      "transport": "gripper"
+    }
+  },
+  "shards": {
+    "available": false,
+    "n_shards": 1,
+    "silhouette": 0.0,
+    "reason": "no observation.image_features in this dataset; visual sharding was not assessed"
+  },
+  "adapter": {
+    "source": "lerobot",
+    "codebase_version": "v3.0",
+    "phase_method": "gripper",
+    "phase_method_counts": {
+      "gripper": 46,
+      "thirds": 4
+    },
+    "spatial_dims_from": "first-3-joints",
+    "gripper_dim": 7,
+    "episodes_read": 50,
+    "episodes_skipped": 0,
+    "tasks": []
+  },
+  "actuators": {
+    "idle_channels": [
+      {
+        "phase": "approach",
+        "dim": "gripper",
+        "rel_std": 0.0
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "IDLE_CHANNEL",
+      "severity": "info",
+      "where": "gripper in 'approach'",
+      "what": "no variance in this phase",
+      "so_what": "Usually by design -- a gripper is idle during an approach. Re-run with `--reference` against a dataset you trust to tell design from defect."
+    }
+  ]
+}
